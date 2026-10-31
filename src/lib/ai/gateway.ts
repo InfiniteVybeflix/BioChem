@@ -1,0 +1,291 @@
+import { env } from "@/lib/env";
+import { modelForTask, type AiModel, type AiTask } from "@/lib/ai/models";
+
+/**
+ * Aevibron Gateway client.
+ *
+ * Contract:
+ *   POST {AEVIBRON_GATEWAY_URL}{AEVIBRON_CHAT_PATH}   header: X-Aevibron-Key
+ *   GET  {AEVIBRON_GATEWAY_URL}{AEVIBRON_STATUS_PATH} header: X-Aevibron-Key
+ *
+ * Request body:  { model, messages: [{role, content}], temperature?, max_tokens?, stream? }
+ * The response parser is intentionally tolerant — it accepts the common
+ * `{ choices: [{ message: { content } }] }` shape as well as flat
+ * `{ content }` / `{ output }` / `{ text }` / plain-string bodies.
+ */
+
+export interface GatewayMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface ChatOptions {
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+}
+
+export interface ChatResult {
+  content: string;
+  model: string;
+  latencyMs: number;
+}
+
+export class GatewayError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+    public readonly retriable: boolean = false,
+  ) {
+    super(message);
+    this.name = "GatewayError";
+  }
+}
+
+export function gatewayConfigured(): boolean {
+  return Boolean(env.gatewayUrl() && env.gatewayApiKey());
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Extract assistant text from any of the common gateway response shapes. */
+export function parseGatewayContent(payload: unknown): string {
+  if (typeof payload === "string") return payload;
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+
+    const choices = record.choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      const first = choices[0] as Record<string, unknown>;
+      const message = first.message as Record<string, unknown> | undefined;
+      if (message && typeof message.content === "string") return message.content;
+      const delta = first.delta as Record<string, unknown> | undefined;
+      if (delta && typeof delta.content === "string") return delta.content;
+      if (typeof first.text === "string") return first.text;
+      if (typeof first.content === "string") return first.content;
+    }
+
+    for (const key of ["content", "output", "text", "response", "result"]) {
+      const value = record[key];
+      if (typeof value === "string") return value;
+    }
+  }
+
+  throw new GatewayError("Unrecognised gateway response shape");
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Sends a chat completion request with exponential-backoff retry
+ * (network errors, 408, 429, 5xx — up to 2 retries).
+ */
+export async function gatewayChat(
+  task: AiTask,
+  messages: GatewayMessage[],
+  options: ChatOptions & { model?: AiModel } = {},
+): Promise<ChatResult> {
+  const baseUrl = env.gatewayUrl();
+  const apiKey = env.gatewayApiKey();
+  if (!baseUrl || !apiKey) {
+    throw new GatewayError("Aevibron gateway is not configured", undefined, false);
+  }
+
+  const model = options.model ?? modelForTask(task);
+  const url = `${baseUrl.replace(/\/+$/, "")}${env.gatewayChatPath()}`;
+  const startedAt = Date.now();
+
+  let lastError: GatewayError = new GatewayError("Gateway request failed");
+
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Aevibron-Key": apiKey,
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+          }),
+        },
+        env.gatewayTimeoutMs(),
+      );
+
+      if (response.ok) {
+        const payload: unknown = await response.json();
+        const content = parseGatewayContent(payload);
+        return { content, model, latencyMs: Date.now() - startedAt };
+      }
+
+      const retriable =
+        response.status === 408 || response.status === 429 || response.status >= 500;
+      lastError = new GatewayError(
+        `Gateway responded ${response.status}`,
+        response.status,
+        retriable,
+      );
+      if (!retriable) throw lastError;
+    } catch (error) {
+      if (error instanceof GatewayError && !error.retriable) throw error;
+      lastError =
+        error instanceof GatewayError
+          ? error
+          : new GatewayError(
+              error instanceof Error ? error.message : "Network error contacting gateway",
+              undefined,
+              true,
+            );
+    }
+
+    if (attempt < 2) {
+      await sleep(500 * 2 ** attempt); // 500ms, 1s
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * Streams a chat completion. Yields text deltas as they arrive.
+ * Falls back to a single chunk when the gateway answers non-streamed.
+ */
+export async function* gatewayChatStream(
+  task: AiTask,
+  messages: GatewayMessage[],
+  options: ChatOptions & { model?: AiModel } = {},
+): AsyncGenerator<string> {
+  const baseUrl = env.gatewayUrl();
+  const apiKey = env.gatewayApiKey();
+  if (!baseUrl || !apiKey) {
+    throw new GatewayError("Aevibron gateway is not configured", undefined, false);
+  }
+
+  const model = options.model ?? modelForTask(task);
+  const url = `${baseUrl.replace(/\/+$/, "")}${env.gatewayChatPath()}`;
+
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Aevibron-Key": apiKey,
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+      }),
+    },
+    env.gatewayTimeoutMs(),
+  );
+
+  if (!response.ok) {
+    throw new GatewayError(`Gateway responded ${response.status}`, response.status);
+  }
+
+  if (!response.body) {
+    throw new GatewayError("Gateway returned an empty stream");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === "[DONE]") return;
+
+        try {
+          const payload: unknown = JSON.parse(data);
+          // SSE chunks: {choices:[{delta:{content}}]} or {content}/plain text.
+          if (payload && typeof payload === "object") {
+            const record = payload as Record<string, unknown>;
+            const choices = record.choices;
+            if (Array.isArray(choices) && choices.length > 0) {
+              const first = choices[0] as Record<string, unknown>;
+              const delta = first.delta as Record<string, unknown> | undefined;
+              if (delta && typeof delta.content === "string" && delta.content.length > 0) {
+                yield delta.content;
+              }
+            }
+            const flat = record.content ?? record.text ?? record.output;
+            if (typeof flat === "string" && flat.length > 0) {
+              yield flat;
+            }
+          } else if (typeof payload === "string" && payload.length > 0) {
+            yield payload;
+          }
+        } catch {
+          // Non-JSON data line — ignore.
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Health check against the gateway status endpoint. */
+export async function gatewayStatus(): Promise<
+  { ok: true; detail: unknown } | { ok: false; error: string }
+> {
+  const baseUrl = env.gatewayUrl();
+  const apiKey = env.gatewayApiKey();
+  if (!baseUrl || !apiKey) {
+    return { ok: false, error: "Gateway not configured (AEVIBRON_GATEWAY_URL / AEVIBRON_API_KEY)" };
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      `${baseUrl.replace(/\/+$/, "")}${env.gatewayStatusPath()}`,
+      { method: "GET", headers: { "X-Aevibron-Key": apiKey } },
+      10_000,
+    );
+    if (!response.ok) {
+      return { ok: false, error: `Status endpoint responded ${response.status}` };
+    }
+    const detail: unknown = await response.json().catch(() => ({}));
+    return { ok: true, detail };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Gateway unreachable",
+    };
+  }
+}

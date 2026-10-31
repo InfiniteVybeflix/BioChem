@@ -1,0 +1,91 @@
+name: Database sync
+
+# Applies supabase/migrations to the LIVE database and regenerates
+# src/types/database.ts from the live schema, committing the result.
+#
+# ── Required repository secrets (Settings → Secrets → Actions) ──
+#
+#   SUPABASE_ACCESS_TOKEN  Personal access token — Supabase dashboard →
+#                          Account → Access Tokens → Generate new token
+#   SUPABASE_PROJECT_REF   Project reference — dashboard → Settings →
+#                          General → "Reference ID"
+#   SUPABASE_DB_URL        Postgres connection string — dashboard →
+#                          Settings → Database → Connection string → URI
+#
+# These are the ONLY secrets this workflow needs. App credentials
+# (gateway keys, console credentials, VAPID…) live in Vercel, never
+# in GitHub.
+#
+# Runs:
+#   • automatically when a PR touching supabase/** merges to main
+#   • manually from the Actions tab ("Run workflow"), with an option
+#     to also run supabase/seed.sql afterwards.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_seed:
+        description: "Also run supabase/seed.sql after migrations"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+
+concurrency:
+  group: database-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Push migrations & regenerate types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link the project
+        run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Apply new migrations
+        run: supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run seed (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_seed == true }}
+        run: psql "${{ secrets.SUPABASE_DB_URL }}" -f supabase/seed.sql -v ON_ERROR_STOP=1
+
+      - name: Regenerate database types from the live database
+        run: supabase gen types typescript --linked > src/types/database.ts
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Verify the app still typechecks against the fresh types
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Commit the regenerated types
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/types/database.ts
+          if git diff --cached --quiet; then
+            echo "Types unchanged — nothing to commit."
+          else
+            git commit -m "chore(db): regenerate database types from live schema [skip ci]"
+            git push
+          fi

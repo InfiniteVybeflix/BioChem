@@ -1,0 +1,283 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/space-grotesk";
+@import "katex/dist/katex.min.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-heading: "Space Grotesk Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* ============================================================
+   Light theme — paper-white blueprint desk
+   ============================================================ */
+:root {
+  --radius: 0.75rem;
+  --background: oklch(0.982 0.006 190);
+  --foreground: oklch(0.235 0.02 245);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.235 0.02 245);
+  --popover: oklch(0.995 0.003 190);
+  --popover-foreground: oklch(0.235 0.02 245);
+  --primary: oklch(0.54 0.1 178);
+  --primary-foreground: oklch(0.985 0.005 190);
+  --secondary: oklch(0.955 0.012 185);
+  --secondary-foreground: oklch(0.35 0.04 190);
+  --muted: oklch(0.958 0.008 190);
+  --muted-foreground: oklch(0.517 0.02 245);
+  --accent: oklch(0.93 0.035 170);
+  --accent-foreground: oklch(0.3 0.05 178);
+  --destructive: oklch(0.577 0.215 27);
+  --destructive-foreground: oklch(0.985 0.005 190);
+  --border: oklch(0.902 0.012 195);
+  --input: oklch(0.902 0.012 195);
+  --ring: oklch(0.54 0.1 178);
+  --chart-1: oklch(0.54 0.1 178);
+  --chart-2: oklch(0.62 0.12 155);
+  --chart-3: oklch(0.68 0.11 95);
+  --chart-4: oklch(0.6 0.12 300);
+  --chart-5: oklch(0.6 0.11 230);
+  --sidebar: oklch(0.975 0.008 190);
+  --sidebar-foreground: oklch(0.235 0.02 245);
+  --sidebar-primary: oklch(0.54 0.1 178);
+  --sidebar-primary-foreground: oklch(0.985 0.005 190);
+  --sidebar-accent: oklch(0.93 0.03 175);
+  --sidebar-accent-foreground: oklch(0.3 0.05 178);
+  --sidebar-border: oklch(0.902 0.012 195);
+  --sidebar-ring: oklch(0.54 0.1 178);
+
+  /* Blueprint grid + orbs */
+  --grid-line: oklch(0.54 0.1 178 / 0.07);
+  --grid-line-strong: oklch(0.54 0.1 178 / 0.11);
+  --orb-1: oklch(0.75 0.13 175 / 0.18);
+  --orb-2: oklch(0.8 0.12 145 / 0.14);
+  --orb-3: oklch(0.72 0.09 250 / 0.1);
+}
+
+/* ============================================================
+   Dark theme — midnight laboratory
+   ============================================================ */
+.dark {
+  --background: oklch(0.185 0.018 250);
+  --foreground: oklch(0.945 0.006 190);
+  --card: oklch(0.235 0.02 250);
+  --card-foreground: oklch(0.945 0.006 190);
+  --popover: oklch(0.225 0.018 250);
+  --popover-foreground: oklch(0.945 0.006 190);
+  --primary: oklch(0.79 0.115 175);
+  --primary-foreground: oklch(0.2 0.03 210);
+  --secondary: oklch(0.29 0.02 250);
+  --secondary-foreground: oklch(0.945 0.006 190);
+  --muted: oklch(0.28 0.018 250);
+  --muted-foreground: oklch(0.71 0.015 240);
+  --accent: oklch(0.33 0.03 190);
+  --accent-foreground: oklch(0.945 0.006 190);
+  --destructive: oklch(0.65 0.19 25);
+  --destructive-foreground: oklch(0.985 0.005 190);
+  --border: oklch(0.995 0 0 / 0.1);
+  --input: oklch(0.995 0 0 / 0.14);
+  --ring: oklch(0.79 0.115 175);
+  --chart-1: oklch(0.79 0.115 175);
+  --chart-2: oklch(0.77 0.13 150);
+  --chart-3: oklch(0.8 0.12 95);
+  --chart-4: oklch(0.7 0.12 300);
+  --chart-5: oklch(0.72 0.1 230);
+  --sidebar: oklch(0.21 0.018 250);
+  --sidebar-foreground: oklch(0.945 0.006 190);
+  --sidebar-primary: oklch(0.79 0.115 175);
+  --sidebar-primary-foreground: oklch(0.2 0.03 210);
+  --sidebar-accent: oklch(0.3 0.025 200);
+  --sidebar-accent-foreground: oklch(0.945 0.006 190);
+  --sidebar-border: oklch(0.995 0 0 / 0.09);
+  --sidebar-ring: oklch(0.79 0.115 175);
+
+  --grid-line: oklch(0.79 0.115 175 / 0.055);
+  --grid-line-strong: oklch(0.79 0.115 175 / 0.09);
+  --orb-1: oklch(0.72 0.13 175 / 0.16);
+  --orb-2: oklch(0.7 0.13 145 / 0.11);
+  --orb-3: oklch(0.6 0.11 300 / 0.09);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading tracking-tight;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 25%, transparent);
+  }
+}
+
+/* ============================================================
+   Blueprint / engineering grid background
+   Layer 1 (body::before): fine grid + accent grid, fades with a radial mask
+   Layer 2 (body::after): faint glowing orbs with a slow drift
+   ============================================================ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to right, var(--grid-line-strong) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line-strong) 1px, transparent 1px);
+  background-size:
+    32px 32px,
+    32px 32px,
+    192px 192px,
+    192px 192px;
+  /* Grid is strongest in empty space and dissolves behind dense content. */
+  mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, black 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, black 30%, transparent 100%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 420px 320px at 12% 8%, var(--orb-1), transparent 70%),
+    radial-gradient(ellipse 520px 400px at 88% 18%, var(--orb-2), transparent 70%),
+    radial-gradient(ellipse 460px 380px at 55% 100%, var(--orb-3), transparent 70%);
+  animation: orb-drift 26s ease-in-out infinite alternate;
+}
+
+@keyframes orb-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(1.5%, -1%, 0) scale(1.04);
+  }
+  100% {
+    transform: translate3d(-1%, 1.5%, 0) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::after {
+    animation: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* ============================================================
+   Glassmorphism utilities
+   ============================================================ */
+@utility glass-card {
+  @apply border-border/70 bg-card/70 rounded-xl border shadow-sm backdrop-blur-xl;
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.06) inset,
+    0 8px 30px oklch(0 0 0 / 0.06);
+}
+
+.dark .glass-card {
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 0.05) inset,
+    0 10px 34px oklch(0 0 0 / 0.35);
+}
+
+@utility glass-panel {
+  @apply border-border/60 bg-card/55 rounded-xl border backdrop-blur-2xl;
+}
+
+@utility text-gradient {
+  background: linear-gradient(
+    120deg,
+    var(--primary),
+    color-mix(in oklch, var(--primary) 55%, oklch(0.7 0.12 150))
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility focus-ring {
+  @apply focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none;
+}
+
+/* Custom scrollbars for long lists */
+@utility scrollbar-slim {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--primary) 35%, transparent) transparent;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background: color-mix(in oklch, var(--primary) 35%, transparent);
+  }
+}
+
+/* KaTeX inherits the app font colour and never overflows its card. */
+.katex {
+  color: inherit;
+}
+.katex-display > .katex {
+  white-space: normal;
+}

@@ -1,0 +1,16 @@
+-- ============================================================
+-- BioChem — optional seed script
+--
+-- Applied ONLY when you tick "Run seed" on the manual
+-- "Database sync" workflow (or run it yourself against the DB URL).
+--
+-- The platform intentionally ships with NO demo content: real
+-- schools, notes and questions are added through the app (or the
+-- operations console) by real people. Put any rows you DO want to
+-- seed on every fresh environment below.
+-- ============================================================
+
+-- Example: add a school (normally done from the operations console).
+-- insert into public.schools (name, short_name, country, max_years, current_academic_year)
+-- values ('University of Nairobi', 'UoN', 'Kenya', 4, '2025/2026')
+-- on conflict do nothing;
