@@ -6,7 +6,7 @@ import { MockHub } from "@/components/mocks/mock-hub";
 import type { AttemptListItem } from "@/components/mocks/types";
 import { ZONES } from "@/lib/constants";
 import type { ExamZone } from "@/types/domain";
-import { attemptConfig } from "@/types/domain";
+import { attemptConfig, isAttemptMode } from "@/types/domain";
 
 /**
  * Mock exam hub — configure + start mocks, resume in-progress attempts and
@@ -44,7 +44,7 @@ export default async function MocksPage({
   const list: AttemptListItem[] = (attempts ?? []).map((row) => ({
     id: row.id,
     zone: row.zone,
-    mode: row.mode,
+    mode: isAttemptMode(row.mode) ? row.mode : "mock",
     status: row.status,
     score: row.score,
     maxScore: row.max_score,

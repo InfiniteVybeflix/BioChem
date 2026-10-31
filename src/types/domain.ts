@@ -14,7 +14,7 @@
 import type { Database, Json } from "./database";
 
 export type { Database, Json } from "./database";
-export type { Tables, TablesInsert, TablesUpdate, Views, Enums, CompositeTypes } from "./database";
+export type { Tables, TablesInsert, TablesUpdate, Enums, CompositeTypes } from "./database";
 
 // ---------------------------------------------------------------------------
 // Schema-derived unions
@@ -26,7 +26,12 @@ export type Difficulty = Database["public"]["Enums"]["difficulty"];
 export type ContentStatus = Database["public"]["Enums"]["content_status"];
 export type QuestionType = Database["public"]["Enums"]["question_type"];
 export type AttemptStatus = Database["public"]["Enums"]["attempt_status"];
-export type AttemptMode = Database["public"]["Enums"]["attempt_mode"];
+/**
+ * `exam_attempts.mode` is a text column with a check constraint
+ * (00003_exam_tables.sql), not a Postgres enum, so it is not part of the
+ * generated `Enums` — the allowed values are mirrored here.
+ */
+export type AttemptMode = "practice" | "mock" | "custom" | "past_paper";
 export type JobType = Database["public"]["Enums"]["job_type"];
 export type JobStatus = Database["public"]["Enums"]["job_status"];
 export type EnquiryStatus = Database["public"]["Enums"]["enquiry_status"];
@@ -56,6 +61,10 @@ export function isChatMessageKind(value: string): value is ChatMessageKind {
 
 export function isSupportCategory(value: string): value is SupportCategory {
   return ["bug", "complaint", "question", "feedback"].includes(value);
+}
+
+export function isAttemptMode(value: string): value is AttemptMode {
+  return value === "practice" || value === "mock" || value === "custom" || value === "past_paper";
 }
 
 // ---------------------------------------------------------------------------

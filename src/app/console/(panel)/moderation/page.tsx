@@ -22,14 +22,14 @@ export default async function ConsoleModerationPage() {
     admin
       .from("submissions")
       .select(
-        "id, type, title, content_md, payload, created_at, profiles(full_name), topics(title)",
+        "id, type, title, content_md, payload, created_at, profiles!user_id(full_name), topics(title)",
       )
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(100),
     admin
       .from("jobs")
-      .select("id, title, org, location, created_at, profiles(full_name)")
+      .select("id, title, org, location, created_at, profiles!posted_by(full_name)")
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(50),

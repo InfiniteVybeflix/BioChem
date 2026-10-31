@@ -1,7 +1,7 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { RunnerPayload, RunnerQuestion } from "@/components/mocks/types";
 import type { Database } from "@/types/domain";
-import { questionOptions, attemptConfig, attemptAnswers } from "@/types/domain";
+import { questionOptions, attemptConfig, attemptAnswers, isAttemptMode } from "@/types/domain";
 
 /**
  * Shared helpers for the /api/mocks* route handlers. Colocated under
@@ -42,7 +42,7 @@ export async function buildPayload(
     attempt: {
       id: attempt.id,
       zone: attempt.zone,
-      mode: attempt.mode,
+      mode: isAttemptMode(attempt.mode) ? attempt.mode : "mock",
       status: attempt.status,
       config: attemptConfig(attempt.config),
       score: attempt.score,
