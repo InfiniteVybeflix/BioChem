@@ -5,7 +5,8 @@ import type { NextConfig } from "next";
  * PWA plugins (@serwist/next, next-pwa) inject webpack hooks that Turbopack
  * never executes, so the service worker would silently never be emitted.
  * BioChem therefore ships a self-contained, bundler-independent service worker
- * (public/sw.js) with precaching, offline fallback, background sync, push and
+ * (served by src/app/sw/route.ts with a per-deployment cache version stamped
+ * in) with precaching, offline fallback, background sync, push and
  * share-target support. See scripts/generate-icons.mjs and README → PWA.
  */
 const nextConfig: NextConfig = {
@@ -31,6 +32,15 @@ const nextConfig: NextConfig = {
         hostname: "upload.wikimedia.org",
       },
     ],
+  },
+  async rewrites() {
+    return {
+      // beforeFiles so /sw.js always resolves to the version-stamping route
+      // handler instead of any file on disk.
+      beforeFiles: [{ source: "/sw.js", destination: "/sw" }],
+      afterFiles: [],
+      fallback: [],
+    };
   },
   async headers() {
     return [

@@ -34,8 +34,11 @@ export async function POST(request: Request): Promise<Response> {
     body_md: body,
     audience,
   });
+  // Surface the real database error (logged server-side too) so a
+  // missing table, bad key or policy problem is diagnosable at a glance.
   if (error) {
-    return Response.json({ error: "Could not save the announcement" }, { status: 502 });
+    console.error("[console-api/broadcast] insert failed:", error.message);
+    return Response.json({ error: error.message }, { status: 502 });
   }
 
   let query = admin.from("profiles").select("id").eq("suspended", false).limit(5000);
@@ -45,11 +48,22 @@ export async function POST(request: Request): Promise<Response> {
 
   const users = (recipients ?? []).map((row) => row.id);
   if (users.length > 0) {
-    await notifyUsers(users, "announcements", {
-      title,
-      body: body.slice(0, 180),
-      link: "/dashboard",
-    });
+    // The announcement is already saved — a failure while delivering
+    // notifications must not fail the request (a 500 would invite a
+    // retry and a duplicate announcement). Log it and report the
+    // audience size, which is what `notified` has always meant.
+    try {
+      await notifyUsers(users, "announcements", {
+        title,
+        body: body.slice(0, 180),
+        link: "/dashboard",
+      });
+    } catch (notifyError) {
+      console.error(
+        "[console-api/broadcast] notification delivery failed:",
+        notifyError instanceof Error ? notifyError.message : notifyError,
+      );
+    }
   }
 
   return Response.json({ ok: true, notified: users.length });

@@ -49,7 +49,13 @@ export async function POST(request: Request): Promise<Response> {
       max_years: body.maxYears ?? 4,
       current_academic_year: body.currentAcademicYear ?? "",
     });
-    if (error) return Response.json({ error: "Could not add the school" }, { status: 502 });
+    // The real database error is logged server-side and returned so the
+    // operator can tell a missing table, bad key or policy problem apart
+    // at a glance — a generic message hides the cause entirely.
+    if (error) {
+      console.error("[console-api/schools] create failed:", error.message);
+      return Response.json({ error: error.message }, { status: 502 });
+    }
     return Response.json({ ok: true });
   }
 
@@ -57,13 +63,19 @@ export async function POST(request: Request): Promise<Response> {
 
   if (body.action === "delete") {
     const { error } = await admin.from("schools").delete().eq("id", body.id);
-    if (error) return Response.json({ error: "Could not remove the school" }, { status: 502 });
+    if (error) {
+      console.error("[console-api/schools] delete failed:", error.message);
+      return Response.json({ error: error.message }, { status: 502 });
+    }
     return Response.json({ ok: true });
   }
 
   if (body.action === "advance_year") {
     const { data, error } = await admin.rpc("advance_school_year", { p_school: body.id });
-    if (error) return Response.json({ error: error.message }, { status: 502 });
+    if (error) {
+      console.error("[console-api/schools] advance_year failed:", error.message);
+      return Response.json({ error: error.message }, { status: 502 });
+    }
     return Response.json({ ok: true, studentsAdvanced: data ?? 0 });
   }
 
@@ -79,6 +91,9 @@ export async function POST(request: Request): Promise<Response> {
   if (body.isActive !== undefined) patch["is_active"] = body.isActive;
 
   const { error } = await admin.from("schools").update(patch).eq("id", body.id);
-  if (error) return Response.json({ error: "Could not update the school" }, { status: 502 });
+  if (error) {
+    console.error("[console-api/schools] update failed:", error.message);
+    return Response.json({ error: error.message }, { status: 502 });
+  }
   return Response.json({ ok: true });
 }
