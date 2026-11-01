@@ -19,6 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { PageHeader, StatCard } from "@/components/common/ui-bits";
 import { SetupNotice } from "@/components/common/setup-notice";
 import { AdSlot } from "@/components/ads/ad-slot";
+import { NewsStrip, type NewsListItem } from "@/components/news/news-cards";
+import { loadNewsSurface } from "@/lib/news/queries";
 import { Markdown } from "@/components/markdown/markdown";
 import { getAuthContext } from "@/lib/supabase/server";
 import { greetingForHour, ZONES } from "@/lib/constants";
@@ -88,6 +90,11 @@ export default async function DashboardPage() {
   const masteryPct = total > 0 ? Math.round((mastered / total) * 100) : 0;
   const answeredToday = (dailyQuestions.data ?? []).filter((q) => q.answered_at).length;
   const unansweredToday = (dailyQuestions.data ?? []).find((q) => !q.answered_at);
+
+  // News strip — only when the console news desk is enabled for the app.
+  const news = await loadNewsSurface(supabase, 3);
+  const newsStrip =
+    news.settings.enabled && news.settings.show_in_app ? news.articles : ([] as NewsListItem[]);
 
   // Zone mastery counts for the quick-entry cards.
   const zoneTotals = new Map<ExamZone, number>([
@@ -169,6 +176,9 @@ export default async function DashboardPage() {
 
       {/* Sponsored banner — top of the dashboard. */}
       <AdSlot placement="banner" />
+
+      {/* News & updates strip — CMS-managed from the console news desk. */}
+      {newsStrip.length > 0 ? <NewsStrip articles={newsStrip as NewsListItem[]} /> : null}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column: zones + question of the day */}

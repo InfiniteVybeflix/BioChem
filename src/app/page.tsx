@@ -1,81 +1,80 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  Atom,
   BookOpen,
-  BrainCircuit,
-  Calendar,
   ClipboardCheck,
-  Download,
   GraduationCap,
-  Layers,
-  MessagesSquare,
+  Newspaper,
   Sparkles,
-  Trophy,
   Users,
 } from "lucide-react";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { featureIcon } from "@/components/console/feature-icons";
+import { NewsGrid, type NewsListItem } from "@/components/news/news-cards";
 import { ZONES, APP_NAME } from "@/lib/constants";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import { loadNewsSurface } from "@/lib/news/queries";
+import { refreshNews } from "@/lib/news/refresh";
 import { landingSettings } from "@/types/domain";
 
-const FEATURES = [
+const FALLBACK_FEATURES = [
   {
-    icon: Layers,
     title: "Exam zones that match your course",
     description:
       "CAT 1, CAT 2 and Main Exam zones — each with a topic tree, LaTeX-rendered notes and an outcomes checklist tracking exactly what you must know.",
   },
   {
-    icon: BrainCircuit,
     title: "AI tutor grounded in your notes",
     description:
       "Ask anything. Get answers that cite your actual course notes, in exam-answer, ELI5 or step-by-step mode — with full conversation memory.",
   },
   {
-    icon: Atom,
     title: "Flashcards with real spaced repetition",
     description:
       "An SM-2 scheduling engine builds your daily review queue. Cards you struggle with come back sooner; mastered ones fade out.",
   },
   {
-    icon: GraduationCap,
     title: "Mock exams with instant grading",
     description:
       "Configurable timers, auto-graded answers, question-by-question review and a score-history chart that shows your trajectory.",
   },
   {
-    icon: Calendar,
     title: "Planner that actually plans",
     description:
       "Drag-and-drop timetable, exam countdowns, reminder alarms — and an AI assistant that fills your free evenings with the right revision.",
   },
   {
-    icon: MessagesSquare,
     title: "Community with lecturer-verified answers",
     description:
       "Per-topic discussions, upvotes, @mentions and a realtime course chat room — with badges marking answers your lecturers verified.",
   },
   {
-    icon: Trophy,
     title: "Credit where it's due",
     description:
       "Every contributed note carries its author's name, and the leaderboard ranks the classmates who lift the whole year group.",
   },
   {
-    icon: Download,
     title: "Installable & offline-friendly",
     description:
       "A real PWA: notes, questions and attempted mocks cache for offline study, with background sync when you reconnect.",
   },
 ];
 
+interface CmsFeature {
+  icon: string;
+  title: string;
+  description: string;
+  href: string | null;
+}
+
 export default async function LandingPage() {
-  // CMS-driven hero copy + the supported-schools list (both editable
-  // live from the operations console; the platform starts empty).
+  // CMS-driven hero copy + the supported-schools list + the feature cards
+  // (all editable live from the operations console; the platform starts
+  // from sensible built-in defaults until the CMS has content).
   const supabase = await getSupabaseServerClient();
   let hero = {
     hero_title: "Master biochemistry.\nTogether.",
@@ -84,19 +83,53 @@ export default async function LandingPage() {
     schools_blurb: "BioChem is live for students at these schools.",
   };
   let schools: { id: string; name: string; short_name: string; country: string }[] = [];
+  let cmsFeatures: CmsFeature[] | null = null;
+  let news: NewsListItem[] = [];
+  let newsStale = false;
   if (supabase) {
-    const [{ data: settingsRow }, { data: schoolRows }] = await Promise.all([
-      supabase.from("site_settings").select("value").eq("key", "landing").maybeSingle(),
-      supabase
-        .from("schools")
-        .select("id, name, short_name, country")
-        .eq("is_active", true)
-        .order("name")
-        .limit(24),
-    ]);
+    const [{ data: settingsRow }, { data: schoolRows }, { data: featureRows }, newsSurface] =
+      await Promise.all([
+        supabase.from("site_settings").select("value").eq("key", "landing").maybeSingle(),
+        supabase
+          .from("schools")
+          .select("id, name, short_name, country")
+          .eq("is_active", true)
+          .order("name")
+          .limit(24),
+        supabase
+          .from("site_features")
+          .select("icon, title, description, href")
+          .eq("enabled", true)
+          .order("order_index")
+          .order("created_at")
+          .limit(12),
+        loadNewsSurface(supabase, 6),
+      ]);
     if (settingsRow) hero = { ...hero, ...landingSettings(settingsRow.value) };
     schools = schoolRows ?? [];
+    cmsFeatures = featureRows && featureRows.length > 0 ? featureRows : null;
+    if (newsSurface.settings.enabled && newsSurface.settings.show_on_landing) {
+      news = newsSurface.articles;
+    }
+    newsStale = newsSurface.refreshDue;
   }
+
+  // Lazy auto-refresh: when AI auto-search is on and the configured
+  // interval has elapsed, nudge the news pipeline in the background —
+  // visitors always land on a reasonably fresh feed. The scheduled
+  // cron (vercel.json) and the console button do the same reliably.
+  const admin = getSupabaseAdminClient();
+  if (admin && newsStale) {
+    void refreshNews(admin, "auto").catch(() => undefined);
+  }
+  const features: CmsFeature[] =
+    cmsFeatures ??
+    FALLBACK_FEATURES.map(({ title, description }) => ({
+      icon: "sparkles",
+      title,
+      description,
+      href: null,
+    }));
   const [heroLine1, ...heroRest] = hero.hero_title.split("\n");
 
   return (
@@ -120,6 +153,9 @@ export default async function LandingPage() {
           >
             <a href="#zones" className="hover:text-foreground transition-colors">
               Zones
+            </a>
+            <a href="#news" className="hover:text-foreground transition-colors">
+              News
             </a>
             <a href="#features" className="hover:text-foreground transition-colors">
               Features
@@ -297,6 +333,38 @@ export default async function LandingPage() {
           </div>
         </section>
 
+        {/* News & live updates — CMS-managed from the console news desk */}
+        {news.length > 0 ? (
+          <section
+            id="news"
+            className="mx-auto max-w-6xl px-4 py-16 sm:px-6"
+            aria-labelledby="news-heading"
+          >
+            <div className="mx-auto max-w-2xl text-center">
+              <Badge
+                variant="outline"
+                className="border-primary/30 bg-primary/8 text-primary gap-1.5 rounded-full px-3 py-1"
+              >
+                <Newspaper className="size-3.5" aria-hidden />
+                News desk
+              </Badge>
+              <h2
+                id="news-heading"
+                className="font-heading mt-4 text-3xl font-bold tracking-tight sm:text-4xl"
+              >
+                BioChem news &amp; updates
+              </h2>
+              <p className="text-muted-foreground mt-3">
+                Biochemistry stories, campus notices and exam announcements — kept fresh from live
+                sources and your own news desk.
+              </p>
+            </div>
+            <div className="mt-10">
+              <NewsGrid articles={news} />
+            </div>
+          </section>
+        ) : null}
+
         {/* Features */}
         <section
           id="features"
@@ -315,20 +383,36 @@ export default async function LandingPage() {
             </p>
           </div>
           <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {FEATURES.map((feature) => (
-              <div
-                key={feature.title}
-                className="glass-card hover:border-primary/30 p-5 transition-colors"
-              >
-                <span className="bg-primary/12 text-primary flex size-10 items-center justify-center rounded-xl">
-                  <feature.icon className="size-5" aria-hidden />
-                </span>
-                <h3 className="mt-4 font-semibold">{feature.title}</h3>
-                <p className="text-muted-foreground mt-2 text-sm leading-6">
-                  {feature.description}
-                </p>
-              </div>
-            ))}
+            {features.map((feature) => {
+              const Icon = featureIcon(feature.icon);
+              const card = (
+                <>
+                  <span className="bg-primary/12 text-primary flex size-10 items-center justify-center rounded-xl">
+                    <Icon className="size-5" aria-hidden />
+                  </span>
+                  <h3 className="mt-4 font-semibold">{feature.title}</h3>
+                  <p className="text-muted-foreground mt-2 text-sm leading-6">
+                    {feature.description}
+                  </p>
+                </>
+              );
+              return feature.href ? (
+                <Link
+                  key={feature.title}
+                  href={feature.href}
+                  className="glass-card hover:border-primary/30 focus-ring p-5 transition-colors"
+                >
+                  {card}
+                </Link>
+              ) : (
+                <div
+                  key={feature.title}
+                  className="glass-card hover:border-primary/30 p-5 transition-colors"
+                >
+                  {card}
+                </div>
+              );
+            })}
           </div>
         </section>
 

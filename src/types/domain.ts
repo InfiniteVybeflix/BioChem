@@ -138,6 +138,59 @@ export interface SupportSettings {
   contact_note: string;
 }
 
+/** One RSS/Atom source the news pipeline fetches live from the internet. */
+export interface NewsSource {
+  id: string;
+  label: string;
+  url: string;
+  enabled: boolean;
+}
+
+export type NewsCategory = "research" | "exams" | "campus" | "jobs" | "general";
+
+export const NEWS_CATEGORIES: NewsCategory[] = [
+  "research",
+  "exams",
+  "campus",
+  "jobs",
+  "general",
+];
+
+export function isNewsCategory(value: string): value is NewsCategory {
+  return (NEWS_CATEGORIES as string[]).includes(value);
+}
+
+/** One student-facing article as rendered by the news surfaces. */
+export interface NewsListItem {
+  id: string;
+  title: string;
+  summary: string;
+  category: NewsCategory;
+  source_url: string | null;
+  source_label: string | null;
+  pinned: boolean;
+  published_at: string | null;
+}
+
+/** News desk settings (site_settings row keyed "news"). */
+export interface NewsSettings {
+  /** Master switch — the student-facing news surfaces render only when on. */
+  enabled: boolean;
+  show_on_landing: boolean;
+  show_in_app: boolean;
+  /** Auto mode: the pipeline fetches sources on the interval below. */
+  auto_search: boolean;
+  /** Auto mode inserts as published; off = everything waits as drafts. */
+  auto_publish: boolean;
+  interval_hours: number;
+  /** Comma-separated keyword filter, e.g. "biochemistry, enzymes, KEMRI". */
+  interests: string;
+  sources: NewsSource[];
+  last_auto_run: string | null;
+  last_run_at: string | null;
+  last_run_result: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // jsonb helpers
 // ---------------------------------------------------------------------------
@@ -312,5 +365,76 @@ export function supportSettings(value: unknown): SupportSettings {
       record?.["contact_note"],
       "Found a bug, have a complaint, or need help? Send a message to the platform team.",
     ),
+  };
+}
+
+/** Default live sources — real RSS feeds covering biochemistry & science news. */
+export const DEFAULT_NEWS_SOURCES: NewsSource[] = [
+  {
+    id: "sciencedaily-biochem",
+    label: "ScienceDaily · Biochemistry",
+    url: "https://www.sciencedaily.com/rss/matter_energy/biochemistry.xml",
+    enabled: true,
+  },
+  {
+    id: "physorg-biology",
+    label: "Phys.org · Biology",
+    url: "https://phys.org/rss-feed/biology-news/",
+    enabled: true,
+  },
+  {
+    id: "chemistryworld",
+    label: "Chemistry World · Biology",
+    url: "https://www.chemistryworld.com/rss/feed",
+    enabled: true,
+  },
+  {
+    id: "nature",
+    label: "Nature · Latest research",
+    url: "https://www.nature.com/nature.rss",
+    enabled: false,
+  },
+  {
+    id: "allafrica-health",
+    label: "AllAfrica · Health (Kenya & Africa)",
+    url: "https://allafrica.com/tools/headlines/rdf/health/headlines.rdf",
+    enabled: false,
+  },
+];
+
+export function newsSettings(value: unknown): NewsSettings {
+  const record = asRecord(value);
+  const rawSources = Array.isArray(record?.["sources"]) ? record["sources"] : [];
+  const sources: NewsSource[] = rawSources
+    .map((entry) => {
+      const source = asRecord(entry);
+      if (!source) return null;
+      const id = typeof source["id"] === "string" ? source["id"] : null;
+      const label = typeof source["label"] === "string" ? source["label"] : null;
+      const url = typeof source["url"] === "string" ? source["url"] : null;
+      if (!id || !url) return null;
+      return {
+        id,
+        label: label ?? url,
+        url,
+        enabled: source["enabled"] !== false,
+      } satisfies NewsSource;
+    })
+    .filter((entry): entry is NewsSource => entry !== null);
+  const interval = record?.["interval_hours"];
+  return {
+    enabled: record?.["enabled"] === true,
+    show_on_landing: record?.["show_on_landing"] !== false,
+    show_in_app: record?.["show_in_app"] !== false,
+    auto_search: record?.["auto_search"] === true,
+    auto_publish: record?.["auto_publish"] === true,
+    interval_hours:
+      typeof interval === "number" && [3, 6, 12, 24].includes(interval) ? interval : 6,
+    interests: stringField(record?.["interests"], "biochemistry, enzymes, metabolism, research"),
+    sources: sources.length > 0 ? sources : DEFAULT_NEWS_SOURCES,
+    last_auto_run: typeof record?.["last_auto_run"] === "string" ? record["last_auto_run"] : null,
+    last_run_at: typeof record?.["last_run_at"] === "string" ? record["last_run_at"] : null,
+    last_run_result:
+      typeof record?.["last_run_result"] === "string" ? record["last_run_result"] : null,
   };
 }

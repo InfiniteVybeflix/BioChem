@@ -7,13 +7,25 @@ import {
   CheckCircle2,
   FileSpreadsheet,
   FileText,
+  FolderTree,
   Loader2,
+  MapPin,
   Sparkles,
   Upload,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { consoleUrl, useConsoleBase } from "@/lib/admin/console-context";
 
@@ -63,7 +75,28 @@ async function readError(response: Response, fallback: string): Promise<string> 
   return fallback;
 }
 
-export function ContentImporter() {
+export interface ImporterTopic {
+  slug: string;
+  title: string;
+  zone: string;
+}
+
+export interface ImporterSchool {
+  id: string;
+  name: string;
+}
+
+const CUSTOM_TOPIC = "__custom";
+
+export function ContentImporter({
+  topics = [],
+  schools = [],
+}: {
+  /** Existing CMS topics — offered as the AI converter's destination. */
+  topics?: ImporterTopic[];
+  /** Schools the operator can scope imported topics to. */
+  schools?: ImporterSchool[];
+}) {
   const base = useConsoleBase();
   const inputRef = useRef<HTMLInputElement>(null);
   const materialInputRef = useRef<HTMLInputElement>(null);
@@ -80,6 +113,21 @@ export function ContentImporter() {
   const [count, setCount] = useState(15);
   const [conversion, setConversion] = useState<AiConversion | null>(null);
   const [reviewText, setReviewText] = useState("");
+
+  // Content destination — where generated/imported rows land.
+  const [topicChoice, setTopicChoice] = useState<string>(""); // "" / "__ai" = AI matches, slug, or CUSTOM_TOPIC
+  const [customTopic, setCustomTopic] = useState("");
+  const [destZoneRaw, setDestZoneRaw] = useState<string>(""); // "__keep" = keep row zones
+  const [destSchool, setDestSchool] = useState<string>(""); // "" / "__all" = all schools
+  const [autoCreate, setAutoCreate] = useState(true);
+
+  const destTopic =
+    topicChoice === CUSTOM_TOPIC
+      ? customTopic.trim()
+      : topicChoice === "" || topicChoice === "__ai"
+        ? ""
+        : topicChoice;
+  const destZone = destZoneRaw === "" || destZoneRaw === "__keep" ? "" : destZoneRaw;
 
   const header = kind === "questions" ? QUESTION_HEADER : NOTE_HEADER;
   const example = kind === "questions" ? QUESTION_EXAMPLE : NOTE_EXAMPLE;
@@ -104,7 +152,13 @@ export function ContentImporter() {
       const response = await fetch(consoleUrl(base, "api/import"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: kind, rows: bounded }),
+        body: JSON.stringify({
+          type: kind,
+          rows: bounded,
+          autoCreateTopics: autoCreate,
+          ...(destZone ? { defaultZone: destZone } : {}),
+          ...(destSchool ? { schoolId: destSchool } : {}),
+        }),
       });
       if (!response.ok) {
         toast.error("Import failed", {
@@ -203,7 +257,13 @@ export function ContentImporter() {
       const response = await fetch(consoleUrl(base, "api/import/ai"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: kind, text: material.slice(0, MAX_MATERIAL_CHARS), count }),
+        body: JSON.stringify({
+          type: kind,
+          text: material.slice(0, MAX_MATERIAL_CHARS),
+          count,
+          ...(destTopic ? { topic: destTopic } : {}),
+          ...(destZone ? { zone: destZone } : {}),
+        }),
       });
       if (!response.ok) {
         toast.error("AI conversion failed", {
@@ -274,6 +334,113 @@ export function ContentImporter() {
         </TabsContent>
       </Tabs>
 
+      {/* ---------- Content destination — applies to every path ---------- */}
+      <div className="glass-card space-y-4 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <MapPin className="text-primary size-4" aria-hidden />
+              Where this content goes
+            </h3>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Pick a topic, zone and school — the AI converter files every generated row there and
+              the CSV importer follows the same destination. Or leave the topic open and let the AI
+              match rows against your CMS topics.
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 pt-1">
+            <Switch
+              id="import-auto-create"
+              checked={autoCreate}
+              onCheckedChange={setAutoCreate}
+              aria-label="Auto-create missing topics"
+            />
+            <Label htmlFor="import-auto-create" className="text-xs font-medium">
+              Auto-create missing topics
+            </Label>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="import-dest-topic">Topic</Label>
+            <Select value={topicChoice || undefined} onValueChange={setTopicChoice}>
+              <SelectTrigger id="import-dest-topic" aria-label="Choose the destination topic">
+                <SelectValue placeholder="AI matches from CMS topics" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__ai">
+                  <span className="text-muted-foreground">AI matches from CMS topics</span>
+                </SelectItem>
+                {topics.map((topic) => (
+                  <SelectItem key={topic.slug} value={topic.slug}>
+                    {topic.title}{" "}
+                    <span className="text-muted-foreground font-mono text-[10px]">
+                      {topic.slug}
+                    </span>
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_TOPIC}>＋ New topic (type a name)…</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="import-dest-zone">Exam zone</Label>
+            <Select value={destZoneRaw || undefined} onValueChange={setDestZoneRaw}>
+              <SelectTrigger id="import-dest-zone" aria-label="Choose the exam zone">
+                <SelectValue placeholder="Keep row zones / AI decides" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__keep">
+                  <span className="text-muted-foreground">Keep row zones / AI decides</span>
+                </SelectItem>
+                <SelectItem value="cat1">CAT 1</SelectItem>
+                <SelectItem value="cat2">CAT 2</SelectItem>
+                <SelectItem value="main">Main exam</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="import-dest-school">School (optional)</Label>
+            <Select value={destSchool || undefined} onValueChange={setDestSchool}>
+              <SelectTrigger id="import-dest-school" aria-label="Choose the school">
+                <SelectValue placeholder="All schools" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">
+                  <span className="text-muted-foreground">All schools</span>
+                </SelectItem>
+                {schools.map((school) => (
+                  <SelectItem key={school.id} value={school.id}>
+                    {school.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {topicChoice === CUSTOM_TOPIC ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="import-custom-topic">New topic name</Label>
+            <Input
+              id="import-custom-topic"
+              value={customTopic}
+              maxLength={160}
+              placeholder="e.g. Lipid metabolism"
+              onChange={(event) => setCustomTopic(event.target.value)}
+            />
+            <p className="text-muted-foreground text-xs">
+              Created automatically on import (with “auto-create” on) — or beforehand in the CMS{" "}
+              <span className="inline-flex items-center gap-1">
+                <FolderTree className="size-3" aria-hidden /> Topics
+              </span>{" "}
+              tab.
+            </p>
+          </div>
+        ) : null}
+      </div>
+
       <Tabs defaultValue="paste" className="gap-4">
         <TabsList>
           <TabsTrigger value="paste">Paste CSV</TabsTrigger>
@@ -294,7 +461,8 @@ export function ContentImporter() {
           />
           <p className="text-muted-foreground text-xs">
             Header row required · the <span className="font-mono">topic</span> column takes a topic
-            slug or exact title from the CMS tab · up to {MAX_ROWS} rows per import.
+            slug or exact title from the CMS Topics tab (missing topics are auto-created while the
+            destination switch above is on) · up to {MAX_ROWS} rows per import.
           </p>
           <Button
             type="button"
@@ -486,8 +654,8 @@ export function ContentImporter() {
                 aria-label="Review the generated CSV"
               />
               <p className="text-muted-foreground text-xs">
-                Edit anything above before importing — the topic column must still match a CMS
-                topic.
+                Edit anything above before importing — with a destination topic chosen every row is
+                already filed there; otherwise missing topics are auto-created on import.
               </p>
               <Button
                 type="button"

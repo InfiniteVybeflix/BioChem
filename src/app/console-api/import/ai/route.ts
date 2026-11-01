@@ -25,6 +25,10 @@ const bodySchema = z.object({
   type: z.enum(["questions", "notes"]),
   text: z.string().min(40, "Give the AI at least a paragraph of material").max(MAX_TEXT_CHARS),
   count: z.coerce.number().int().min(1).max(50).optional(),
+  /** Optional destination: file every generated row under this topic. */
+  topic: z.string().trim().max(160).optional(),
+  /** Optional zone override applied to every generated row. */
+  zone: z.enum(["cat1", "cat2", "main"]).optional(),
 });
 
 const QUESTION_HEADER =
@@ -85,12 +89,13 @@ export async function POST(request: Request): Promise<Response> {
       { status: 422 },
     );
   }
-  const { type, text, count } = parsed.data;
+  const { type, text, count, topic, zone } = parsed.data;
 
   const admin = getSupabaseAdminClient();
   if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
 
-  // Topic list — the AI may only map rows onto real topics.
+  // Topic list — without a fixed destination the AI may only map rows
+  // onto real topics.
   const { data: topicRows, error: topicError } = await admin
     .from("topics")
     .select("slug, title, zone")
@@ -100,12 +105,11 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: topicError.message }, { status: 502 });
   }
   const topics = topicRows ?? [];
-  if (topics.length === 0) {
-    return Response.json(
-      { error: "No topics exist yet — create topics in the CMS tab first" },
-      { status: 422 },
-    );
-  }
+  // Zero-config path: with no topics in the CMS and no destination chosen,
+  // the AI files everything under "general-biochemistry" — the importer's
+  // auto-create provisions it on the way in.
+  const fallbackTopic = topics.length === 0 && !topic ? "general-biochemistry" : null;
+  const effectiveTopic = topic ?? fallbackTopic ?? null;
   const topicList = topics
     .map((topic) => `- ${topic.slug} — "${topic.title}" (${topic.zone})`)
     .join("\n");
@@ -113,12 +117,18 @@ export async function POST(request: Request): Promise<Response> {
   const defaultCount = type === "questions" ? 15 : 8;
   const targetCount = Math.min(count ?? defaultCount, type === "questions" ? 50 : 30);
 
+  const destination = effectiveTopic
+    ? `Destination (MUST override everything else):
+- File EVERY row under the topic "${effectiveTopic}" — write exactly "${effectiveTopic}" in the topic column of every row. Do NOT use any other topic.
+${zone ? `- Write exactly "${zone}" in the zone column of every row.` : ""}`
+    : `Available topics (slug — "title" (zone)):
+${topicList}`;
+
   const userPrompt = `Target: produce up to ${targetCount} ${
     type === "questions" ? "questions" : "notes"
   }. Fewer is fine if the material runs out — never pad or repeat.
 
-Available topics (slug — "title" (zone)):
-${topicList}
+${destination}
 
 Material:
 """
@@ -150,6 +160,19 @@ ${text.slice(0, MAX_TEXT_CHARS)}
   });
   const rows = parsedCsv.data ?? [];
 
+  // A chosen destination is enforced in the data, not just the prompt —
+  // the review CSV the operator sees is exactly what will be imported.
+  if (effectiveTopic) {
+    for (const row of rows) {
+      row.topic = effectiveTopic;
+    }
+  }
+  if (zone) {
+    for (const row of rows) {
+      if ("zone" in row) row.zone = zone;
+    }
+  }
+
   // Pre-validate with the exact importer schemas so the operator sees a
   // trustworthy count before importing.
   const rowSchema = type === "questions" ? csvQuestionRowSchema : csvNoteRowSchema;
@@ -164,8 +187,12 @@ ${text.slice(0, MAX_TEXT_CHARS)}
     }
   });
 
+  // Re-serialise when a destination was forced so the review CSV the
+  // operator edits is exactly what the importer receives.
+  const outputCsv = topic || zone ? Papa.unparse(rows) : csv;
+
   return Response.json({
-    csv,
+    csv: outputCsv,
     rowCount: rows.length,
     validCount,
     invalidCount: rows.length - validCount,

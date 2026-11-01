@@ -1,18 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { useUser } from "@/hooks/use-user";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { AdPlacement } from "@/types/domain";
-import { cn } from "@/lib/utils";
+import { AdCard, type AdCardSize } from "@/components/ads/ad-card";
 
 /**
- * Reusable sponsored-ad placement. Renders one clearly labelled glass card
- * (image, title, body, CTA) when the `ads_enabled` feature flag is on and an
- * enabled, in-flight ad exists for the placement — otherwise renders nothing
- * at all.
+ * Reusable sponsored-ad placement. Renders one clearly labelled card
+ * (image, title, body, CTA) when the `ads_enabled` feature flag is on
+ * and an enabled, in-flight ad targets this placement — otherwise
+ * renders nothing at all.
+ *
+ * An ad can target SEVERAL placements at once (migration 00018): every
+ * slot it lists renders the same card, sized per the ad's `size`
+ * setting. Before the migration exists the slot transparently falls
+ * back to the legacy single-placement column.
  *
  * Ads re-sync every 60 seconds (and when the tab becomes visible again), so a
  * placement created in the console appears for students without a reload.
@@ -24,9 +27,10 @@ interface AdRow {
   id: string;
   title: string;
   body: string;
-  targetUrl: string;
   ctaLabel: string;
   imageUrl: string | null;
+  targetUrl: string;
+  size: AdCardSize;
 }
 
 const SEEN_KEY_PREFIX = "biochem:ad-seen-";
@@ -54,6 +58,10 @@ function variantFor(placement: AdPlacement): "banner" | "sidebar" | "card" {
   return "card";
 }
 
+function normaliseSize(value: string | null | undefined): AdCardSize {
+  return value === "compact" || value === "large" ? value : "standard";
+}
+
 export function AdSlot({ placement }: { placement: AdPlacement }) {
   const { supabase: userClient } = useUser();
   const [ad, setAd] = useState<AdRow | null>(null);
@@ -70,10 +78,11 @@ export function AdSlot({ placement }: { placement: AdPlacement }) {
       const nowIso = new Date().toISOString();
       const [flagsResult, adsResult] = await Promise.all([
         client.from("feature_flags").select("enabled").eq("key", "ads_enabled").maybeSingle(),
+        // Modern schema first: match against the multi-placement array.
         client
           .from("ads")
-          .select("id, title, body, target_url, cta_label, image_url")
-          .eq("placement", placement)
+          .select("id, title, body, target_url, cta_label, image_url, size")
+          .contains("placements", [placement])
           .eq("enabled", true)
           .lte("starts_at", nowIso)
           .or(`ends_at.is.null,ends_at.gte.${nowIso}`)
@@ -81,10 +90,40 @@ export function AdSlot({ placement }: { placement: AdPlacement }) {
           .limit(1),
       ]);
 
+      // Shared shape: `size` is absent on a pre-00018 database.
+      let row:
+        | {
+            id: string;
+            title: string;
+            body: string;
+            target_url: string;
+            cta_label: string;
+            image_url: string | null;
+            size?: string | null;
+          }
+        | undefined = adsResult.data?.[0];
+      let size = normaliseSize(row?.size);
+
+      // Legacy fallback (pre-00018 database): the placements column doesn't
+      // exist yet, so match the synced single-placement column instead.
+      if (adsResult.error) {
+        const legacy = await client
+          .from("ads")
+          .select("id, title, body, target_url, cta_label, image_url")
+          .eq("placement", placement)
+          .eq("enabled", true)
+          .lte("starts_at", nowIso)
+          .or(`ends_at.is.null,ends_at.gte.${nowIso}`)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (cancelled) return;
+        size = "standard";
+        row = legacy.data?.[0];
+      }
+
       if (cancelled) return;
       // Ads default OFF when the flag row is missing (seed default: disabled).
       const adsOn = flagsResult.data?.enabled === true;
-      const row = adsResult.data?.[0];
       if (!adsOn || !row) {
         setAd(null);
         return;
@@ -94,9 +133,10 @@ export function AdSlot({ placement }: { placement: AdPlacement }) {
         id: row.id,
         title: row.title,
         body: row.body,
-        targetUrl: row.target_url,
         ctaLabel: row.cta_label,
         imageUrl: row.image_url ?? null,
+        targetUrl: row.target_url,
+        size,
       });
     };
 
@@ -137,71 +177,12 @@ export function AdSlot({ placement }: { placement: AdPlacement }) {
 
   if (!ad) return null;
 
-  const variant = variantFor(placement);
-
-  // image_url is an arbitrary external URL set from the console — a plain img
-  // keeps deployments working without extending next/image remote patterns.
-  /* eslint-disable @next/next/no-img-element */
   return (
-    <aside
-      className={cn(
-        "glass-card border-amber-500/30",
-        variant === "banner" &&
-          "flex max-w-none flex-col gap-4 p-4 sm:flex-row sm:items-center sm:p-5",
-        variant === "sidebar" && "p-4",
-        variant === "card" && "max-w-2xl p-4 sm:p-5",
-      )}
-      aria-label="Sponsored placement"
-    >
-      {ad.imageUrl && variant === "banner" ? (
-        <img
-          src={ad.imageUrl}
-          alt=""
-          className="ring-border/60 h-20 w-full rounded-lg object-cover ring-1 sm:w-36"
-          loading="lazy"
-        />
-      ) : null}
-      <div className="min-w-0 flex-1">
-        <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-amber-700 uppercase dark:text-amber-400">
-          <Sparkles className="size-3" aria-hidden />
-          Sponsored
-        </span>
-        <p
-          className={cn(
-            "font-heading mt-2.5 font-semibold",
-            variant === "sidebar" && "text-sm",
-          )}
-        >
-          {ad.title}
-        </p>
-        <p
-          className={cn(
-            "text-muted-foreground mt-1 text-sm leading-6",
-            variant === "sidebar" && "text-xs leading-5",
-          )}
-        >
-          {ad.body}
-        </p>
-        {ad.imageUrl && variant !== "banner" ? (
-          <img
-            src={ad.imageUrl}
-            alt=""
-            className="ring-border/60 mt-3 max-h-40 w-full rounded-lg object-cover ring-1"
-            loading="lazy"
-          />
-        ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onCtaClick}
-          className="focus-ring mt-3 border-amber-500/40 hover:border-amber-500/60"
-        >
-          {ad.ctaLabel}
-          <ExternalLink className="size-3.5" aria-hidden />
-        </Button>
-      </div>
-    </aside>
+    <AdCard
+      ad={{ title: ad.title, body: ad.body, ctaLabel: ad.ctaLabel, imageUrl: ad.imageUrl }}
+      variant={variantFor(placement)}
+      size={ad.size}
+      onCta={onCtaClick}
+    />
   );
-  /* eslint-enable @next/next/no-img-element */
 }

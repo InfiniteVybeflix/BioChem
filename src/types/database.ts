@@ -66,6 +66,8 @@ export type Database = {
           image_url: string | null
           impressions: number
           placement: Database["public"]["Enums"]["ad_placement"]
+          placements: string[]
+          size: string
           starts_at: string
           target_url: string
           title: string
@@ -82,6 +84,8 @@ export type Database = {
           image_url?: string | null
           impressions?: number
           placement: Database["public"]["Enums"]["ad_placement"]
+          placements?: string[]
+          size?: string
           starts_at?: string
           target_url: string
           title: string
@@ -98,6 +102,8 @@ export type Database = {
           image_url?: string | null
           impressions?: number
           placement?: Database["public"]["Enums"]["ad_placement"]
+          placements?: string[]
+          size?: string
           starts_at?: string
           target_url?: string
           title?: string
@@ -1789,6 +1795,42 @@ export type Database = {
         }
         Relationships: []
       }
+      site_features: {
+        Row: {
+          created_at: string
+          description: string
+          enabled: boolean
+          href: string | null
+          icon: string
+          id: string
+          order_index: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          enabled?: boolean
+          href?: string | null
+          icon?: string
+          id?: string
+          order_index?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          enabled?: boolean
+          href?: string | null
+          icon?: string
+          id?: string
+          order_index?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       site_settings: {
         Row: {
           key: string
@@ -1804,6 +1846,63 @@ export type Database = {
           key?: string
           updated_at?: string
           value?: Json
+        }
+        Relationships: []
+      }
+      news_articles: {
+        Row: {
+          auto: boolean
+          category: string
+          content_md: string
+          created_at: string
+          created_by: string | null
+          dedupe_key: string | null
+          id: string
+          image_url: string | null
+          pinned: boolean
+          published_at: string | null
+          source_label: string | null
+          source_url: string | null
+          status: string
+          summary: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          auto?: boolean
+          category?: string
+          content_md?: string
+          created_at?: string
+          created_by?: string | null
+          dedupe_key?: string | null
+          id?: string
+          image_url?: string | null
+          pinned?: boolean
+          published_at?: string | null
+          source_label?: string | null
+          source_url?: string | null
+          status?: string
+          summary?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          auto?: boolean
+          category?: string
+          content_md?: string
+          created_at?: string
+          created_by?: string | null
+          dedupe_key?: string | null
+          id?: string
+          image_url?: string | null
+          pinned?: boolean
+          published_at?: string | null
+          source_label?: string | null
+          source_url?: string | null
+          status?: string
+          summary?: string
+          title?: string
+          updated_at?: string
         }
         Relationships: []
       }

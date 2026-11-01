@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
-import { Copy, Loader2, Megaphone, Pencil, Plus, ToggleLeft, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Copy,
+  Loader2,
+  Megaphone,
+  Pencil,
+  Plus,
+  ToggleLeft,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,10 +42,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { AdCard, type AdCardSize } from "@/components/ads/ad-card";
 import { EmptyState } from "@/components/common/ui-bits";
 import { adSchema } from "@/lib/validation";
 import type { AdPlacement } from "@/types/domain";
 import type { z } from "zod";
+import { cn } from "@/lib/utils";
 import { consoleUrl, useConsoleBase } from "@/lib/admin/console-context";
 
 export interface FlagRow {
@@ -49,7 +60,8 @@ export interface AdRow {
   id: string;
   title: string;
   body: string;
-  placement: AdPlacement;
+  placements: AdPlacement[];
+  size: AdCardSize;
   targetUrl: string;
   imageUrl: string | null;
   ctaLabel: string;
@@ -61,16 +73,22 @@ export interface AdRow {
 }
 
 const PLACEMENTS: { value: AdPlacement; label: string; hint: string }[] = [
-  { value: "banner", label: "Banner", hint: "Wide strip at the top of the dashboard" },
-  { value: "sidebar", label: "Sidebar", hint: "Compact card in the dashboard side rail" },
-  { value: "jobs", label: "Jobs", hint: "Card under the job board listings" },
-  { value: "events", label: "Events", hint: "Card at the bottom of Discussions" },
-  { value: "resources", label: "Resources", hint: "Card under the past papers list" },
+  { value: "banner", label: "Dashboard banner", hint: "Wide strip at the top of the student dashboard" },
+  { value: "sidebar", label: "Dashboard sidebar", hint: "Compact card in the dashboard side rail" },
+  { value: "jobs", label: "Jobs page", hint: "Card under the job board listings" },
+  { value: "events", label: "Discussions", hint: "Card at the bottom of the community page" },
+  { value: "resources", label: "Past papers", hint: "Card under the past papers list" },
 ];
 
 const PLACEMENT_LABELS: Record<AdPlacement, string> = Object.fromEntries(
   PLACEMENTS.map((placement) => [placement.value, placement.label]),
 ) as Record<AdPlacement, string>;
+
+const SIZES: { value: AdCardSize; label: string; hint: string }[] = [
+  { value: "compact", label: "Compact", hint: "Slim card, small text" },
+  { value: "standard", label: "Standard", hint: "The default card size" },
+  { value: "large", label: "Large", hint: "Roomy card with a bigger image" },
+];
 
 const FLAG_LABELS: Record<string, string> = {
   ads_enabled: "Sponsored placements",
@@ -87,7 +105,8 @@ type AdFormInput = z.input<typeof adSchema>;
 const EMPTY_AD: AdFormInput = {
   title: "",
   body: "",
-  placement: "banner",
+  placements: ["banner"],
+  size: "standard",
   targetUrl: "",
   imageUrl: null,
   ctaLabel: "Learn more",
@@ -97,10 +116,88 @@ const EMPTY_AD: AdFormInput = {
 
 async function readError(response: Response, fallback: string): Promise<string> {
   const payload: unknown = await response.json().catch(() => null);
-  if (typeof payload === "object" && payload !== null && "error" in payload) {
-    return String((payload as { error: unknown }).error);
+  const server =
+    typeof payload === "object" && payload !== null && "error" in payload
+      ? String((payload as { error: unknown }).error)
+      : null;
+  if (response.status === 401) {
+    return "Your console session expired — reload the page and sign in again.";
   }
-  return fallback;
+  return server ? `${server} (HTTP ${response.status})` : `${fallback} (HTTP ${response.status})`;
+}
+
+/**
+ * Live placement preview: a miniature student dashboard so the operator
+ * can see exactly where the card will appear (and what the unselected
+ * slots look like) before saving.
+ */
+function PlacementPreview({
+  selected,
+  size,
+  ad,
+}: {
+  selected: AdPlacement[];
+  size: AdCardSize;
+  ad: { title: string; body: string; ctaLabel: string; imageUrl: string | null };
+}) {
+  const slots: { placement: AdPlacement; label: string }[] = [
+    { placement: "banner", label: "Dashboard banner" },
+    { placement: "sidebar", label: "Dashboard sidebar" },
+    { placement: "jobs", label: "Jobs page" },
+    { placement: "events", label: "Discussions" },
+    { placement: "resources", label: "Past papers" },
+  ];
+
+  const renderSlot = (placement: AdPlacement, label: string, variant: "banner" | "sidebar" | "card") => {
+    const active = selected.includes(placement);
+    return (
+      <div key={placement} className="min-w-0">
+        <p
+          className={cn(
+            "mb-1 text-[10px] font-semibold tracking-wide uppercase",
+            active ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground/60",
+          )}
+        >
+          {label}
+        </p>
+        {active ? (
+          <div className="rounded-xl ring-2 ring-amber-500/40">
+            <AdCard
+              ad={ad}
+              variant={variant}
+              size={size}
+              className={cn(
+                "pointer-events-none select-none",
+                variant === "card" && "max-w-none",
+              )}
+            />
+          </div>
+        ) : (
+          <div className="border-border/70 text-muted-foreground/50 flex h-16 items-center justify-center rounded-xl border border-dashed text-[11px]">
+            Not included — stays empty
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-background/60 border-border space-y-4 rounded-2xl border p-4">
+      <p className="text-muted-foreground text-xs font-medium">
+        Preview — where this ad will appear ({selected.length}{" "}
+        {selected.length === 1 ? "slot" : "slots"})
+      </p>
+      {renderSlot("banner", "Dashboard banner", "banner")}
+      <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
+        <div className="space-y-4">
+          {renderSlot("jobs", "Jobs page", "card")}
+          {renderSlot("events", "Discussions", "card")}
+          {renderSlot("resources", "Past papers", "card")}
+        </div>
+        <div>{renderSlot("sidebar", "Dashboard sidebar", "sidebar")}</div>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -128,6 +225,22 @@ export function AdsManager({
   // null id → create; string id → edit of that placement.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<AdFormInput>(EMPTY_AD);
+
+  const adsEnabled = flags.find((flag) => flag.key === "ads_enabled")?.enabled ?? false;
+
+  const togglePlacement = (placement: AdPlacement, on: boolean) => {
+    const current = form.placements ?? [];
+    if (on && !current.includes(placement)) {
+      setForm({ ...form, placements: [...current, placement] });
+    } else if (!on && current.includes(placement)) {
+      // Never allow removing the last placement — the schema needs one.
+      if (current.length === 1) {
+        toast.error("Keep at least one placement selected");
+        return;
+      }
+      setForm({ ...form, placements: current.filter((entry) => entry !== placement) });
+    }
+  };
 
   const toggleFlag = async (flag: FlagRow, enabled: boolean) => {
     setFlagBusy(flag.key);
@@ -205,7 +318,8 @@ export function AdsManager({
     setForm({
       title: ad.title,
       body: ad.body,
-      placement: ad.placement,
+      placements: ad.placements.length > 0 ? ad.placements : ["banner"],
+      size: ad.size,
       targetUrl: ad.targetUrl,
       imageUrl: ad.imageUrl,
       ctaLabel: ad.ctaLabel,
@@ -221,7 +335,8 @@ export function AdsManager({
     setForm({
       title: `${ad.title} (copy)`,
       body: ad.body,
-      placement: ad.placement,
+      placements: ad.placements.length > 0 ? ad.placements : ["banner"],
+      size: ad.size,
       targetUrl: ad.targetUrl,
       imageUrl: ad.imageUrl,
       ctaLabel: ad.ctaLabel,
@@ -236,7 +351,8 @@ export function AdsManager({
     const candidate = {
       title: form.title.trim(),
       body: form.body.trim(),
-      placement: form.placement,
+      placements: form.placements ?? [],
+      size: form.size ?? "standard",
       targetUrl: form.targetUrl.trim(),
       imageUrl: form.imageUrl?.trim() ? form.imageUrl.trim() : null,
       ctaLabel: (form.ctaLabel ?? "").trim() || "Learn more",
@@ -279,6 +395,13 @@ export function AdsManager({
     } finally {
       setBusy(false);
     }
+  };
+
+  const previewAd = {
+    title: form.title.trim() || "Your ad title",
+    body: form.body.trim() || "The ad body students will read.",
+    ctaLabel: (form.ctaLabel ?? "").trim() || "Learn more",
+    imageUrl: form.imageUrl?.trim() ? form.imageUrl.trim() : null,
   };
 
   return (
@@ -328,8 +451,9 @@ export function AdsManager({
             </h2>
             <p className="text-muted-foreground mt-0.5 text-sm">
               Appear in their slot within a minute of saving, while the{" "}
-              <strong>ads_enabled</strong> flag is on. (The separate{" "}
-              <strong>sponsorships</strong> flag only controls sponsored job listings.)
+              <strong>ads_enabled</strong> flag is on. One ad can fill several slots; pick the
+              slots and size in the editor. (The separate <strong>sponsorships</strong> flag only
+              controls sponsored job listings.)
             </p>
           </div>
           <Button type="button" onClick={openCreate} className="focus-ring">
@@ -338,11 +462,22 @@ export function AdsManager({
           </Button>
         </div>
 
+        {!adsEnabled ? (
+          <div className="border-amber-500/40 bg-amber-500/10 mt-4 flex items-start gap-3 rounded-xl border p-4">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+            <p className="text-sm">
+              <strong>Sponsored placements are switched off</strong> — students see no ads right
+              now, even enabled ones. Turn on the <strong>Sponsored placements</strong> flag above
+              to put them live.
+            </p>
+          </div>
+        ) : null}
+
         {ads.length === 0 ? (
           <EmptyState
             icon={<Megaphone className="size-6" aria-hidden />}
             title="No sponsored placements"
-            description="Create one to promote a course, event or resource — it appears in the chosen slot once ads_enabled is on."
+            description="Create one to promote a course, event or resource — it appears in every slot you select once ads_enabled is on."
             action={
               <Button type="button" onClick={openCreate} className="focus-ring">
                 <Plus className="size-4" aria-hidden />
@@ -355,7 +490,8 @@ export function AdsManager({
             <Table>
               <TableHeader className="bg-card/95 sticky top-0 z-10 backdrop-blur">
                 <TableRow>
-                  <TableHead>Placement</TableHead>
+                  <TableHead>Ad</TableHead>
+                  <TableHead>Slots</TableHead>
                   <TableHead>Target</TableHead>
                   <TableHead className="text-right">Impr.</TableHead>
                   <TableHead className="text-right">Clicks</TableHead>
@@ -367,13 +503,34 @@ export function AdsManager({
               <TableBody>
                 {ads.map((ad) => (
                   <TableRow key={ad.id}>
-                    <TableCell className="max-w-[14rem]">
+                    <TableCell className="max-w-[13rem]">
                       <span className="block truncate font-medium">{ad.title}</span>
-                      <Badge variant="outline" className="mt-1">
-                        {PLACEMENT_LABELS[ad.placement] ?? ad.placement}
-                      </Badge>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <Badge variant="outline" className="text-[10px]">
+                          {ad.size}
+                        </Badge>
+                        {ad.enabled ? null : (
+                          <Badge variant="outline" className="text-muted-foreground text-[10px]">
+                            paused
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="max-w-[12rem]">
+                    <TableCell className="max-w-[10rem]">
+                      <div className="flex flex-wrap gap-1">
+                        {ad.placements.slice(0, 2).map((placement) => (
+                          <Badge key={placement} variant="secondary" className="text-[10px]">
+                            {PLACEMENT_LABELS[placement] ?? placement}
+                          </Badge>
+                        ))}
+                        {ad.placements.length > 2 ? (
+                          <Badge variant="secondary" className="text-[10px]">
+                            +{ad.placements.length - 2} more
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-[10rem]">
                       <a
                         href={ad.targetUrl}
                         target="_blank"
@@ -453,14 +610,15 @@ export function AdsManager({
           }
         }}
       >
-        <DialogContent className="scrollbar-slim max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="scrollbar-slim max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingId ? "Edit sponsored placement" : "New sponsored placement"}
             </DialogTitle>
             <DialogDescription>
-              Validated with the shared ad schema. Live placements render in their slot within a
-              minute once the ads_enabled flag is on.
+              Pick every slot this ad should fill, adjust its size, and check the live preview —
+              students see exactly this. Live placements render within a minute once the
+              ads_enabled flag is on.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -483,22 +641,55 @@ export function AdsManager({
                 className="min-h-20"
               />
             </div>
+
+            <div className="space-y-2">
+              <Label>Placements — choose every slot this ad fills</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {PLACEMENTS.map((placement) => {
+                  const checked = (form.placements ?? []).includes(placement.value);
+                  return (
+                    <label
+                      key={placement.value}
+                      className={cn(
+                        "border-border hover:border-primary/50 flex cursor-pointer items-start gap-2.5 rounded-xl border p-3 transition-colors",
+                        checked && "border-primary/60 bg-primary/5",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) =>
+                          togglePlacement(placement.value, event.target.checked)
+                        }
+                        className="accent-primary mt-0.5"
+                        aria-label={placement.label}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium">{placement.label}</span>
+                        <span className="text-muted-foreground block text-xs">
+                          {placement.hint}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="ad-placement">Placement</Label>
+                <Label htmlFor="ad-size">Card size</Label>
                 <Select
-                  value={form.placement}
-                  onValueChange={(placement) =>
-                    setForm({ ...form, placement: placement as AdPlacement })
-                  }
+                  value={form.size ?? "standard"}
+                  onValueChange={(size) => setForm({ ...form, size: size as AdCardSize })}
                 >
-                  <SelectTrigger id="ad-placement" aria-label="Choose placement">
+                  <SelectTrigger id="ad-size" aria-label="Choose the card size">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {PLACEMENTS.map((placement) => (
-                      <SelectItem key={placement.value} value={placement.value}>
-                        {placement.label} — {placement.hint}
+                    {SIZES.map((size) => (
+                      <SelectItem key={size.value} value={size.value}>
+                        {size.label} — {size.hint}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -553,6 +744,12 @@ export function AdsManager({
                 onCheckedChange={(enabled) => setForm({ ...form, enabled })}
               />
             </div>
+
+            <PlacementPreview
+              selected={form.placements ?? []}
+              size={form.size ?? "standard"}
+              ad={previewAd}
+            />
           </div>
           <DialogFooter>
             <Button

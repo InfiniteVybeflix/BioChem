@@ -16,6 +16,7 @@ import {
   LifeBuoy,
   MessageCircle,
   MessagesSquare,
+  Newspaper,
   Settings,
   Sparkles,
   Trophy,
@@ -64,6 +65,7 @@ const SECTIONS: NavSection[] = [
   {
     title: "Community",
     items: [
+      { label: "News & updates", href: "/news", icon: Newspaper },
       { label: "Discussions", href: "/community", icon: MessagesSquare },
       { label: "Messages", href: "/messages", icon: MessageCircle },
       { label: "Leaderboard", href: "/leaderboard", icon: Trophy },

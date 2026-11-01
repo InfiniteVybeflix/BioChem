@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Loader2, Palette, Save, Sparkles } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { FolderTree, Layers, Loader2, Palette, Save, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,7 +72,17 @@ function Field({
   );
 }
 
-export function CmsSettings({ initial }: { initial: CmsValues }) {
+export function CmsSettings({
+  initial,
+  featuresSlot,
+  topicsSlot,
+}: {
+  initial: CmsValues;
+  /** CMS → Features tab: landing-page feature cards + module switches. */
+  featuresSlot?: ReactNode;
+  /** CMS → Topics tab: the content topic tree the importers resolve against. */
+  topicsSlot?: ReactNode;
+}) {
   const base = useConsoleBase();
   const [values, setValues] = useState<CmsValues>(initial);
   const [busy, setBusy] = useState<string | null>(null);
@@ -119,6 +129,16 @@ export function CmsSettings({ initial }: { initial: CmsValues }) {
           <TabsTrigger value="support" className="flex-1 sm:flex-none">
             Support page
           </TabsTrigger>
+          {featuresSlot ? (
+            <TabsTrigger value="features" className="flex-1 gap-1.5 sm:flex-none">
+              <Layers className="size-3.5" aria-hidden /> Features
+            </TabsTrigger>
+          ) : null}
+          {topicsSlot ? (
+            <TabsTrigger value="topics" className="flex-1 gap-1.5 sm:flex-none">
+              <FolderTree className="size-3.5" aria-hidden /> Topics
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="branding" className="mt-4">
@@ -212,6 +232,17 @@ export function CmsSettings({ initial }: { initial: CmsValues }) {
             </Button>
           </div>
         </TabsContent>
+
+        {featuresSlot ? (
+          <TabsContent value="features" className="mt-4">
+            {featuresSlot}
+          </TabsContent>
+        ) : null}
+        {topicsSlot ? (
+          <TabsContent value="topics" className="mt-4">
+            {topicsSlot}
+          </TabsContent>
+        ) : null}
 
         <TabsContent value="support" className="mt-4">
           <div className="glass-card space-y-4 p-5">
