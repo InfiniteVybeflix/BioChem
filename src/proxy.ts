@@ -33,6 +33,9 @@ const PUBLIC_PREFIXES = [
   "/api/cron",
   "/api/ai/status",
   "/api/support",
+  // Android TWA / Play Console asset verification must be reachable
+  // without a session or Play Store app-link verification fails.
+  "/.well-known",
 ];
 
 /** Internal prefixes that must only ever be reached via rewrite. */
