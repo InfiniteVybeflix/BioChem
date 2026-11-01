@@ -3,6 +3,7 @@ import { FileText } from "lucide-react";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { SetupNotice } from "@/components/common/setup-notice";
 import { EmptyState, PageHeader } from "@/components/common/ui-bits";
+import { AdSlot } from "@/components/ads/ad-slot";
 import { PastPapersList, type PastPaperExam } from "@/components/mocks/past-papers-list";
 
 /**
@@ -59,6 +60,9 @@ export default async function PastPapersPage() {
       ) : (
         <PastPapersList exams={papers} />
       )}
+
+      {/* Sponsored resources slot. */}
+      <AdSlot placement="resources" />
     </div>
   );
 }

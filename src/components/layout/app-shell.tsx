@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FlaskConical, Flame, LogOut, Menu, Search, User, X, Zap } from "lucide-react";
+import { Flame, LogOut, Menu, PenLine, Search, User, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,6 +16,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { BrandLogo } from "@/components/layout/brand-logo";
+import { FloatingTutor } from "@/components/ai/floating-tutor";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { openCommandPalette } from "@/components/layout/command-palette";
@@ -30,9 +32,7 @@ export function BrandMark({ href = "/dashboard" }: { href?: string }) {
       className="focus-ring flex items-center gap-2.5 rounded-lg"
       aria-label={`${APP_NAME} home`}
     >
-      <span className="from-primary to-primary/70 text-primary-foreground shadow-primary/25 flex size-9 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg">
-        <FlaskConical className="size-5" aria-hidden />
-      </span>
+      <BrandLogo className="size-9" />
       <span className="font-heading text-lg font-bold tracking-tight">
         Bio<span className="text-primary">Chem</span>
       </span>
@@ -162,7 +162,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link href="/submit" className="gap-2">
-                    <FlaskConical className="size-4" aria-hidden /> Contribute content
+                    <PenLine className="size-4" aria-hidden /> Contribute content
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
@@ -187,6 +187,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           · Built by Aevibron
         </footer>
       </div>
+
+      {/* Floating AI tutor — reachable from every authenticated page. */}
+      <FloatingTutor />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireAdminApi } from "@/lib/admin/session";
-import { csvQuestionRowSchema, slugify } from "@/lib/content/schema";
+import { csvNoteRowSchema, csvQuestionRowSchema, slugify } from "@/lib/content/schema";
 import type { QuestionOption } from "@/types/domain";
 import { toJson } from "@/types/domain";
 
@@ -31,23 +31,7 @@ const bodySchema = z.object({
     .max(MAX_ROWS, `Import at most ${MAX_ROWS} rows at a time`),
 });
 
-/** Console CSV note row — mirrors the staff frontmatter contract. */
-const csvNoteRowSchema = z.object({
-  title: z.string().min(3).max(200),
-  topic: z.string().min(1),
-  summary: z.string().max(500).optional(),
-  content: z.string().min(10),
-  tags: z.string().optional(), // comma-separated
-  status: z.enum(["published", "draft"]).default("published"),
-  reading_minutes: z.coerce.number().int().min(1).max(120).optional(),
-  exam_critical: z
-    .preprocess(
-      (value) =>
-        value === true || ["true", "yes", "1"].includes(String(value).trim().toLowerCase()),
-      z.boolean(),
-    )
-    .default(false),
-});
+/** Console CSV note row — shared with the AI conversion route. */
 
 function parseTags(raw: string | undefined): string[] {
   return (raw ?? "")

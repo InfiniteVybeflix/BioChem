@@ -87,6 +87,26 @@ export const csvQuestionRowSchema = z.object({
 
 export type CsvQuestionRow = z.infer<typeof csvQuestionRowSchema>;
 
+/** CSV note importer row — mirrors the staff frontmatter contract. */
+export const csvNoteRowSchema = z.object({
+  title: z.string().min(3).max(200),
+  topic: z.string().min(1),
+  summary: z.string().max(500).optional(),
+  content: z.string().min(10),
+  tags: z.string().optional(), // comma-separated
+  status: z.enum(["published", "draft"]).default("published"),
+  reading_minutes: z.coerce.number().int().min(1).max(120).optional(),
+  exam_critical: z
+    .preprocess(
+      (value) =>
+        value === true || ["true", "yes", "1"].includes(String(value).trim().toLowerCase()),
+      z.boolean(),
+    )
+    .default(false),
+});
+
+export type CsvNoteRow = z.infer<typeof csvNoteRowSchema>;
+
 export function slugify(value: string): string {
   return value
     .toLowerCase()

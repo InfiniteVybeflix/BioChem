@@ -2,7 +2,15 @@
 
 import { useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { BadgeCheck, Loader2, Search, ShieldAlert, ShieldOff, UserCog } from "lucide-react";
+import {
+  BadgeCheck,
+  KeyRound,
+  Loader2,
+  Search,
+  ShieldAlert,
+  ShieldOff,
+  UserCog,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +41,12 @@ import {
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/common/ui-bits";
 import type { UserRole } from "@/types/domain";
+import {
+  ABILITY_LABELS,
+  ABILITY_PRESETS,
+  GRANTABLE_ABILITIES,
+  type Capability,
+} from "@/lib/rbac";
 import { consoleUrl, useConsoleBase } from "@/lib/admin/console-context";
 
 export interface AdminUserRow {
@@ -44,13 +58,12 @@ export interface AdminUserRow {
   streak: number;
   suspended: boolean;
   approved: boolean;
+  staffAbilities: string[];
   schoolName: string | null;
   yearOfStudy: number | null;
   createdAt: string;
   lastActiveDate: string | null;
 }
-
-const ROLES: UserRole[] = ["student", "lecturer"];
 
 const ROLE_BADGE_CLASS: Partial<Record<UserRole, string>> = {
   student: "border-border bg-muted text-foreground",
@@ -88,6 +101,11 @@ export function UsersTable({ initialUsers }: { initialUsers: AdminUserRow[] }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Abilities editor.
+  const [abilitiesUser, setAbilitiesUser] = useState<AdminUserRow | null>(null);
+  const [selectedAbilities, setSelectedAbilities] = useState<Capability[]>([]);
+  const [abilitiesBusy, setAbilitiesBusy] = useState(false);
+
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return users.filter((user) => {
@@ -104,6 +122,58 @@ export function UsersTable({ initialUsers }: { initialUsers: AdminUserRow[] }) {
   const openAction = (action: PendingAction) => {
     setReason("");
     setPending(action);
+  };
+
+  const openAbilities = (user: AdminUserRow) => {
+    setSelectedAbilities(
+      user.staffAbilities.filter((ability): ability is Capability =>
+        (GRANTABLE_ABILITIES as readonly string[]).includes(ability),
+      ),
+    );
+    setAbilitiesUser(user);
+  };
+
+  const toggleAbility = (ability: Capability) => {
+    setSelectedAbilities((prev) =>
+      prev.includes(ability)
+        ? prev.filter((entry) => entry !== ability)
+        : [...prev, ability],
+    );
+  };
+
+  const saveAbilities = async () => {
+    if (!abilitiesUser) return;
+    setAbilitiesBusy(true);
+    try {
+      const response = await fetch(consoleUrl(base, "api/users"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: abilitiesUser.id,
+          action: "set_abilities",
+          abilities: selectedAbilities,
+        }),
+      });
+      if (!response.ok) {
+        toast.error(await readError(response, "Couldn't update the abilities"));
+        return;
+      }
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.id === abilitiesUser.id ? { ...user, staffAbilities: selectedAbilities } : user,
+        ),
+      );
+      toast.success(
+        selectedAbilities.length > 0
+          ? `${abilitiesUser.fullName} now has ${selectedAbilities.length} extra abilit${selectedAbilities.length === 1 ? "y" : "ies"}`
+          : `Abilities cleared for ${abilitiesUser.fullName}`,
+      );
+      setAbilitiesUser(null);
+    } catch {
+      toast.error("Network error — please try again");
+    } finally {
+      setAbilitiesBusy(false);
+    }
   };
 
   const confirm = async () => {
@@ -223,6 +293,12 @@ export function UsersTable({ initialUsers }: { initialUsers: AdminUserRow[] }) {
                           awaiting approval
                         </Badge>
                       ) : null}
+                      {user.staffAbilities.length > 0 ? (
+                        <Badge className="border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400">
+                          <KeyRound className="size-3" aria-hidden />
+                          {user.staffAbilities.length} abilit{user.staffAbilities.length === 1 ? "y" : "ies"}
+                        </Badge>
+                      ) : null}
                       {user.suspended ? <Badge variant="destructive">suspended</Badge> : null}
                     </div>
                   </TableCell>
@@ -272,6 +348,16 @@ export function UsersTable({ initialUsers }: { initialUsers: AdminUserRow[] }) {
                         <span className="hidden sm:inline">
                           {user.role === "student" ? "Make staff" : "Make student"}
                         </span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-1.5"
+                        aria-label={`Manage abilities for ${user.fullName}`}
+                        onClick={() => openAbilities(user)}
+                      >
+                        <KeyRound className="size-4" aria-hidden />
+                        <span className="hidden sm:inline">Abilities</span>
                       </Button>
                       <Button
                         size="sm"
@@ -349,6 +435,87 @@ export function UsersTable({ initialUsers }: { initialUsers: AdminUserRow[] }) {
             >
               {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
               Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---------- Abilities editor ---------- */}
+      <Dialog
+        open={abilitiesUser !== null}
+        onOpenChange={(open) => {
+          if (!open) setAbilitiesUser(null);
+        }}
+      >
+        <DialogContent className="scrollbar-slim max-h-[85vh] overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Abilities for {abilitiesUser?.fullName}</DialogTitle>
+            <DialogDescription>
+              Grant a student part of the lecturer toolset — e.g. make them class rep — without
+              changing their role. They keep every student feature.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              {ABILITY_PRESETS.map((preset) => (
+                <Button
+                  key={preset.id}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="focus-ring"
+                  disabled={abilitiesBusy}
+                  onClick={() => setSelectedAbilities(preset.abilities)}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+
+            <div className="divide-border/60 rounded-xl border">
+              {GRANTABLE_ABILITIES.map((ability) => {
+                const checked = selectedAbilities.includes(ability);
+                return (
+                  <label
+                    key={ability}
+                    className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 text-sm first:rounded-t-xl last:rounded-b-xl hover:bg-muted/40"
+                  >
+                    <span>
+                      <span className="font-medium">{ABILITY_LABELS[ability]}</span>
+                      <span className="text-muted-foreground block text-xs">{ability}</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleAbility(ability)}
+                      disabled={abilitiesBusy}
+                      className="accent-primary size-4"
+                      aria-label={ABILITY_LABELS[ability]}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            <p className="text-muted-foreground text-xs">
+              Ability holders reach the Lecturer panel sections their abilities unlock
+              (moderate chat, class analytics, publishing…) and are verified in the answer
+              badges they leave.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setAbilitiesUser(null)}
+              disabled={abilitiesBusy}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void saveAbilities()} disabled={abilitiesBusy}>
+              {abilitiesBusy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              Save abilities
             </Button>
           </DialogFooter>
         </DialogContent>

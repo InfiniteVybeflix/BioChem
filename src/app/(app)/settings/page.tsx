@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/common/ui-bits";
 import { SetupNotice } from "@/components/common/setup-notice";
 import { ProfileForm } from "@/components/settings/profile-form";
+import { PasswordForm } from "@/components/settings/password-form";
 import { AppearanceSettings } from "@/components/settings/appearance-settings";
 import { SupportCenter } from "@/components/support/support-center";
 import { getAuthContext, getSupabaseServerClient } from "@/lib/supabase/server";
@@ -42,6 +43,9 @@ export default async function SettingsPage() {
           <TabsTrigger value="profile" className="flex-1 sm:flex-none">
             Profile
           </TabsTrigger>
+          <TabsTrigger value="security" className="flex-1 sm:flex-none">
+            Security
+          </TabsTrigger>
           <TabsTrigger value="appearance" className="flex-1 sm:flex-none">
             Appearance
           </TabsTrigger>
@@ -56,6 +60,11 @@ export default async function SettingsPage() {
               initialAvatarUrl={auth.profile.avatar_url}
               initialTimezone={auth.profile.timezone}
             />
+          </div>
+        </TabsContent>
+        <TabsContent value="security" className="mt-6">
+          <div className="glass-card p-4 sm:p-6">
+            <PasswordForm />
           </div>
         </TabsContent>
         <TabsContent value="appearance" className="mt-6">

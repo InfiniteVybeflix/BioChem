@@ -7,7 +7,6 @@ import {
   Calendar,
   ClipboardCheck,
   Download,
-  FlaskConical,
   GraduationCap,
   Layers,
   MessagesSquare,
@@ -15,6 +14,7 @@ import {
   Trophy,
   Users,
 } from "lucide-react";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
@@ -109,9 +109,7 @@ export default async function LandingPage() {
             className="focus-ring flex items-center gap-2.5 rounded-lg"
             aria-label={`${APP_NAME} home`}
           >
-            <span className="from-primary to-primary/70 text-primary-foreground shadow-primary/25 flex size-9 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg">
-              <FlaskConical className="size-5" aria-hidden />
-            </span>
+            <BrandLogo className="size-9" />
             <span className="font-heading text-lg font-bold tracking-tight">
               Bio<span className="text-primary">Chem</span>
             </span>
@@ -417,7 +415,7 @@ export default async function LandingPage() {
       <footer className="border-border/60 bg-background/60 border-t backdrop-blur-xl">
         <div className="text-muted-foreground mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm sm:flex-row sm:px-6">
           <p className="flex items-center gap-2">
-            <FlaskConical className="text-primary size-4" aria-hidden />
+            <BrandLogo className="size-6 rounded-lg" />
             {APP_NAME} — the complete biochemistry study platform.
           </p>
           <nav className="flex gap-5" aria-label="Footer">

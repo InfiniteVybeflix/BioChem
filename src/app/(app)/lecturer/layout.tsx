@@ -27,7 +27,13 @@ const LECTURER_NAV: PanelNavItem[] = [
 export default async function LecturerLayout({ children }: { children: ReactNode }) {
   const auth = await getAuthContext();
   if (!auth) redirect("/login");
-  if (auth.profile.role !== "lecturer" && auth.profile.role !== "admin") redirect("/dashboard");
+  const { profile } = auth;
+  const isStaff = profile.role === "lecturer" || profile.role === "admin";
+  // Students with console-granted abilities (class rep, assistant
+  // lecturer…) also reach the panel — individual pages still enforce
+  // their own capabilities.
+  const hasAbilities = (profile.staff_abilities ?? []).length > 0;
+  if (!isStaff && !hasAbilities) redirect("/dashboard");
 
   return (
     <section className="space-y-6">

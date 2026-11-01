@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,8 +16,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 
 /** Sidebar / sheet conversation list for the AI tutor. */
 
@@ -31,6 +40,7 @@ export function ConversationList({
   onSelect,
   onNew,
   onDelete,
+  onRename,
   className,
 }: {
   conversations: ConversationSummary[];
@@ -38,16 +48,40 @@ export function ConversationList({
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => Promise<void>;
+  onRename?: (id: string, title: string) => Promise<void>;
   className?: string;
 }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Rename dialog state.
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   const relative = (iso: string): string => {
     try {
       return formatDistanceToNow(new Date(iso), { addSuffix: true });
     } catch {
       return iso;
+    }
+  };
+
+  const openRename = (conversation: ConversationSummary) => {
+    setRenameId(conversation.id);
+    setRenameTitle(conversation.title || "");
+  };
+
+  const submitRename = async () => {
+    if (!renameId || !onRename) return;
+    const title = renameTitle.trim();
+    if (title.length === 0) return;
+    setRenaming(true);
+    try {
+      await onRename(renameId, title);
+    } finally {
+      setRenaming(false);
+      setRenameId(null);
     }
   };
 
@@ -88,6 +122,17 @@ export function ConversationList({
                       {relative(conversation.updated_at)}
                     </span>
                   </button>
+                  {onRename ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="focus-ring text-muted-foreground size-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+                      onClick={() => openRename(conversation)}
+                      aria-label={`Rename conversation "${conversation.title || "Untitled"}"`}
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                    </Button>
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -103,6 +148,45 @@ export function ConversationList({
           </ul>
         )}
       </nav>
+
+      {/* Rename dialog */}
+      <Dialog
+        open={renameId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameId(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename conversation</DialogTitle>
+            <DialogDescription>Give this chat a name you&apos;ll recognise.</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={renameTitle}
+            onChange={(event) => setRenameTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void submitRename();
+              }
+            }}
+            maxLength={80}
+            autoFocus
+            aria-label="Conversation title"
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRenameId(null)} disabled={renaming}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void submitRename()}
+              disabled={renaming || renameTitle.trim().length === 0}
+            >
+              {renaming ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={confirmId !== null}

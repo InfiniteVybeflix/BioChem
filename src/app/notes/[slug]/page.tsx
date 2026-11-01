@@ -87,13 +87,18 @@ export default async function NotePage({ params }: { params: Promise<{ slug: str
 
   const { note, topic, contributor } = result;
 
+  // One auth resolution for the whole render — powers the staff check, the
+  // mastery map and the auth-aware public header.
+  const auth = await getAuthContext();
+
   // Published notes are public; drafts/pending are owner- or staff-only (RLS
   // already hides them from everyone else — this is the defence in depth).
   if (note.status !== "published") {
-    const auth = await getAuthContext();
     const isOwner = auth?.user.id === note.contributed_by;
     const isStaff = auth
-      ? auth.profile.role === "lecturer" || auth.profile.role === "admin"
+      ? auth.profile.role === "lecturer" ||
+        auth.profile.role === "admin" ||
+        (auth.profile.staff_abilities ?? []).includes("publish_content")
       : false;
     if (!isOwner && !isStaff) notFound();
   } else {
@@ -113,19 +118,16 @@ export default async function NotePage({ params }: { params: Promise<{ slug: str
   const outcomes: OutcomeRow[] = outcomeRows ?? [];
 
   const mastered: Record<string, boolean> = {};
-  if (outcomes.length > 0) {
-    const auth = await getAuthContext();
-    if (auth) {
-      const { data: progressRows } = await supabase
-        .from("user_outcome_progress")
-        .select("outcome_id, mastered")
-        .eq("user_id", auth.user.id)
-        .in(
-          "outcome_id",
-          outcomes.map((outcome) => outcome.id),
-        );
-      for (const row of progressRows ?? []) mastered[row.outcome_id] = row.mastered;
-    }
+  if (outcomes.length > 0 && auth) {
+    const { data: progressRows } = await supabase
+      .from("user_outcome_progress")
+      .select("outcome_id, mastered")
+      .eq("user_id", auth.user.id)
+      .in(
+        "outcome_id",
+        outcomes.map((outcome) => outcome.id),
+      );
+    for (const row of progressRows ?? []) mastered[row.outcome_id] = row.mastered;
   }
 
   const contentPreview = `${note.title}\n\n${note.content_md.slice(0, 4000)}`;
@@ -139,7 +141,7 @@ export default async function NotePage({ params }: { params: Promise<{ slug: str
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <PublicHeader />
+      <PublicHeader signedIn={auth !== null} />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
         <Link
           href={`/zones/${topic.zone}`}

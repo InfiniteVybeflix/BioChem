@@ -60,10 +60,60 @@ const ROLE_CAPABILITIES: Record<UserRole | "guest", readonly Capability[]> = {
   ],
 };
 
-export function can(role: UserRole | "guest" | null | undefined, capability: Capability): boolean {
+export function can(
+  role: UserRole | "guest" | null | undefined,
+  capability: Capability,
+  abilities?: readonly string[] | null,
+): boolean {
+  if (abilities && abilities.includes(capability)) return true;
   if (!role) return ROLE_CAPABILITIES.guest.includes(capability);
   return ROLE_CAPABILITIES[role].includes(capability);
 }
+
+/**
+ * Capabilities the operations console may grant to individual students
+ * (e.g. a class rep) without changing their role. "Class rep" maps to
+ * moderating chat + broadcasting to their class; "assistant lecturer"
+ * grants the full lecturer set.
+ */
+export const GRANTABLE_ABILITIES = [
+  "publish_content",
+  "post_jobs",
+  "view_class_analytics",
+  "verify_answers",
+  "moderate_chat",
+  "broadcast",
+] as const satisfies readonly Capability[];
+
+export type GrantableAbility = (typeof GRANTABLE_ABILITIES)[number];
+
+export const ABILITY_LABELS: Record<GrantableAbility, string> = {
+  publish_content: "Publish content directly",
+  post_jobs: "Post jobs & internships",
+  view_class_analytics: "View class analytics",
+  verify_answers: "Verify answers",
+  moderate_chat: "Moderate community chat",
+  broadcast: "Send announcements",
+};
+
+/** Handy presets for the console ability editor. */
+export const ABILITY_PRESETS: { id: string; label: string; abilities: Capability[] }[] = [
+  {
+    id: "class_rep",
+    label: "Class rep",
+    abilities: ["moderate_chat", "broadcast"],
+  },
+  {
+    id: "verifier",
+    label: "Answer verifier",
+    abilities: ["verify_answers"],
+  },
+  {
+    id: "assistant_lecturer",
+    label: "Assistant lecturer",
+    abilities: [...GRANTABLE_ABILITIES],
+  },
+];
 
 export function roleOf(profile: Profile | null | undefined): UserRole | "guest" {
   if (!profile) return "guest";

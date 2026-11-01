@@ -1,6 +1,7 @@
 import { MessagesSquare } from "lucide-react";
 import { PageHeader } from "@/components/common/ui-bits";
 import { SetupNotice } from "@/components/common/setup-notice";
+import { AdSlot } from "@/components/ads/ad-slot";
 import { ThreadList } from "@/components/community/thread-list";
 import type { ProfileLite, TopicLite } from "@/components/community/types";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
@@ -70,6 +71,9 @@ export default async function CommunityPage() {
         }
       />
       <ThreadList initialDiscussions={sorted} authors={authors} topics={topicList} />
+
+      {/* Sponsored events slot. */}
+      <AdSlot placement="events" />
     </>
   );
 }

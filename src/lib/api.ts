@@ -45,7 +45,10 @@ export async function requireUser(
   if (auth.profile.suspended) {
     return { ok: false, response: jsonError("Account suspended", 403) };
   }
-  if (capability && !can(auth.profile.role, capability)) {
+  if (
+    capability &&
+    !can(auth.profile.role, capability, auth.profile.staff_abilities ?? [])
+  ) {
     return { ok: false, response: jsonError("Insufficient permissions", 403) };
   }
   return {

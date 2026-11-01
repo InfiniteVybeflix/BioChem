@@ -1542,6 +1542,7 @@ export type Database = {
           onboarding_done: boolean
           role: Database["public"]["Enums"]["user_role"]
           school_id: string | null
+          staff_abilities: string[]
           streak_count: number
           suspended: boolean
           suspension_reason: string | null
@@ -1562,6 +1563,7 @@ export type Database = {
           onboarding_done?: boolean
           role?: Database["public"]["Enums"]["user_role"]
           school_id?: string | null
+          staff_abilities?: string[]
           streak_count?: number
           suspended?: boolean
           suspension_reason?: string | null
@@ -1582,6 +1584,7 @@ export type Database = {
           onboarding_done?: boolean
           role?: Database["public"]["Enums"]["user_role"]
           school_id?: string | null
+          staff_abilities?: string[]
           streak_count?: number
           suspended?: boolean
           suspension_reason?: string | null

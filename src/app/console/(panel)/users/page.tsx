@@ -14,7 +14,7 @@ export default async function ConsoleUsersPage() {
   const { data: profiles } = await admin
     .from("profiles")
     .select(
-      "id, full_name, role, xp, streak_count, suspended, approved, school_id, year_of_study, created_at, last_active_date, schools(name)",
+      "id, full_name, role, xp, streak_count, suspended, approved, staff_abilities, school_id, year_of_study, created_at, last_active_date, schools(name)",
     )
     .order("created_at", { ascending: false })
     .limit(1000);
@@ -31,6 +31,7 @@ export default async function ConsoleUsersPage() {
     streak: profile.streak_count,
     suspended: profile.suspended,
     approved: profile.approved,
+    staffAbilities: profile.staff_abilities ?? [],
     schoolName: profile.schools?.name ?? null,
     yearOfStudy: profile.year_of_study,
     createdAt: profile.created_at,

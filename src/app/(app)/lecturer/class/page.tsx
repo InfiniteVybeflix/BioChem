@@ -31,7 +31,7 @@ export const metadata: Metadata = {
 export default async function LecturerClassPage() {
   const auth = await getAuthContext();
   if (!auth) redirect("/login");
-  if (!can(auth.profile.role, "view_class_analytics")) redirect("/dashboard");
+  if (!can(auth.profile.role, "view_class_analytics", auth.profile.staff_abilities ?? [])) redirect("/dashboard");
 
   const admin = getSupabaseAdminClient();
   if (!admin) {

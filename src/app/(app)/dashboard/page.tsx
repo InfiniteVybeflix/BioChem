@@ -18,6 +18,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, StatCard } from "@/components/common/ui-bits";
 import { SetupNotice } from "@/components/common/setup-notice";
+import { AdSlot } from "@/components/ads/ad-slot";
 import { Markdown } from "@/components/markdown/markdown";
 import { getAuthContext } from "@/lib/supabase/server";
 import { greetingForHour, ZONES } from "@/lib/constants";
@@ -165,6 +166,9 @@ export default async function DashboardPage() {
           icon={<Sparkles className="size-4" aria-hidden />}
         />
       </div>
+
+      {/* Sponsored banner — top of the dashboard. */}
+      <AdSlot placement="banner" />
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column: zones + question of the day */}
@@ -381,6 +385,9 @@ export default async function DashboardPage() {
               ))}
             </div>
           </section>
+
+          {/* Sponsored side rail — end of the dashboard right column. */}
+          <AdSlot placement="sidebar" />
         </div>
       </div>
     </div>

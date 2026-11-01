@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { ArrowRight, Check, FlaskConical, GraduationCap, Loader2 } from "lucide-react";
+import { ArrowRight, Check, GraduationCap, Loader2 } from "lucide-react";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/common/ui-bits";
@@ -96,9 +97,7 @@ export function OnboardingWizard({
   return (
     <div className="glass-card p-6 sm:p-8">
       <div className="mb-6 text-center">
-        <span className="bg-primary/10 text-primary mx-auto flex size-12 items-center justify-center rounded-2xl">
-          <FlaskConical className="size-6" aria-hidden />
-        </span>
+        <BrandLogo className="mx-auto size-12" rounded="rounded-2xl" />
         <h1 className="font-display mt-3 text-xl font-semibold tracking-tight">
           {isStudent ? "Where do you study?" : "Which school are you at?"}
         </h1>

@@ -2,7 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { FlaskConical, Loader2, LockKeyhole } from "lucide-react";
+import { Loader2, LockKeyhole } from "lucide-react";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,9 +51,7 @@ export function ConsoleSignIn() {
     <div className="flex min-h-dvh items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <span className="glass-card mx-auto flex size-14 items-center justify-center rounded-2xl">
-            <FlaskConical className="text-primary size-7" aria-hidden />
-          </span>
+          <BrandLogo className="glass-card mx-auto size-14" rounded="rounded-2xl" />
           <h1 className="font-display mt-4 text-xl font-semibold tracking-tight">
             Operations console
           </h1>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format } from "date-fns";
-import { Loader2, Megaphone, Plus, ToggleLeft, Trash2 } from "lucide-react";
+import { Copy, Loader2, Megaphone, Pencil, Plus, ToggleLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,14 +51,26 @@ export interface AdRow {
   body: string;
   placement: AdPlacement;
   targetUrl: string;
+  imageUrl: string | null;
   ctaLabel: string;
+  startsAt: string;
   endsAt: string | null;
   impressions: number;
   clicks: number;
   enabled: boolean;
 }
 
-const PLACEMENTS: AdPlacement[] = ["jobs", "events", "resources", "sidebar", "banner"];
+const PLACEMENTS: { value: AdPlacement; label: string; hint: string }[] = [
+  { value: "banner", label: "Banner", hint: "Wide strip at the top of the dashboard" },
+  { value: "sidebar", label: "Sidebar", hint: "Compact card in the dashboard side rail" },
+  { value: "jobs", label: "Jobs", hint: "Card under the job board listings" },
+  { value: "events", label: "Events", hint: "Card at the bottom of Discussions" },
+  { value: "resources", label: "Resources", hint: "Card under the past papers list" },
+];
+
+const PLACEMENT_LABELS: Record<AdPlacement, string> = Object.fromEntries(
+  PLACEMENTS.map((placement) => [placement.value, placement.label]),
+) as Record<AdPlacement, string>;
 
 const FLAG_LABELS: Record<string, string> = {
   ads_enabled: "Sponsored placements",
@@ -75,7 +87,7 @@ type AdFormInput = z.input<typeof adSchema>;
 const EMPTY_AD: AdFormInput = {
   title: "",
   body: "",
-  placement: "sidebar",
+  placement: "banner",
   targetUrl: "",
   imageUrl: null,
   ctaLabel: "Learn more",
@@ -92,9 +104,11 @@ async function readError(response: Response, fallback: string): Promise<string> 
 }
 
 /**
- * Admin ads & flags manager: the seven feature-flag switches plus the
- * sponsored placements table (create / delete / enable) — every mutation goes
- * through /api/admin/ads and updates the UI optimistically on success.
+ * Admin ads & flags manager: the feature-flag switches plus the sponsored
+ * placements table (create / edit / duplicate / enable / delete) — every
+ * mutation goes through the console ads API and updates the table in place,
+ * so placements created here reach students within a minute (the AdSlot
+ * component re-syncs automatically).
  */
 export function AdsManager({
   initialFlags,
@@ -108,9 +122,11 @@ export function AdsManager({
   const [ads, setAds] = useState(initialAds);
   const [flagBusy, setFlagBusy] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
+  // null id → create; string id → edit of that placement.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<AdFormInput>(EMPTY_AD);
 
   const toggleFlag = async (flag: FlagRow, enabled: boolean) => {
@@ -178,7 +194,44 @@ export function AdsManager({
     }
   };
 
-  const createAd = async () => {
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(EMPTY_AD);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (ad: AdRow) => {
+    setEditingId(ad.id);
+    setForm({
+      title: ad.title,
+      body: ad.body,
+      placement: ad.placement,
+      targetUrl: ad.targetUrl,
+      imageUrl: ad.imageUrl,
+      ctaLabel: ad.ctaLabel,
+      // datetime-local inputs need the local "YYYY-MM-DDTHH:mm" slice.
+      endsAt: ad.endsAt ? new Date(ad.endsAt).toISOString().slice(0, 16) : null,
+      enabled: ad.enabled,
+    });
+    setDialogOpen(true);
+  };
+
+  const openDuplicate = (ad: AdRow) => {
+    setEditingId(null);
+    setForm({
+      title: `${ad.title} (copy)`,
+      body: ad.body,
+      placement: ad.placement,
+      targetUrl: ad.targetUrl,
+      imageUrl: ad.imageUrl,
+      ctaLabel: ad.ctaLabel,
+      endsAt: ad.endsAt ? new Date(ad.endsAt).toISOString().slice(0, 16) : null,
+      enabled: false, // duplicates start paused so they can be reviewed first
+    });
+    setDialogOpen(true);
+  };
+
+  const saveAd = async () => {
     const endsAtIso = form.endsAt ? new Date(form.endsAt).toISOString() : null;
     const candidate = {
       title: form.title.trim(),
@@ -196,26 +249,35 @@ export function AdsManager({
       return;
     }
 
-    setCreating(true);
+    setBusy(true);
     try {
       const response = await fetch(consoleUrl(base, "api/ads"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "create", ...parsed.data }),
+        body: JSON.stringify(
+          editingId
+            ? { action: "update", id: editingId, ...parsed.data }
+            : { action: "create", ...parsed.data },
+        ),
       });
       if (!response.ok) {
-        toast.error(await readError(response, "Couldn't create the placement"));
+        toast.error(await readError(response, "Couldn't save the placement"));
         return;
       }
-      toast.success("Sponsored placement created");
-      setCreateOpen(false);
+      const data = (await response.json()) as { ad: AdRow };
+      setAds((prev) =>
+        editingId
+          ? prev.map((entry) => (entry.id === editingId ? data.ad : entry))
+          : [data.ad, ...prev],
+      );
+      toast.success(editingId ? "Placement updated" : "Sponsored placement created");
+      setDialogOpen(false);
       setForm(EMPTY_AD);
-      // Refresh with the server row — a full reload is the honest path.
-      window.location.reload();
+      setEditingId(null);
     } catch {
       toast.error("Network error — try again");
     } finally {
-      setCreating(false);
+      setBusy(false);
     }
   };
 
@@ -265,11 +327,12 @@ export function AdsManager({
               Sponsored placements
             </h2>
             <p className="text-muted-foreground mt-0.5 text-sm">
-              Shown around the app while the <strong>ads_enabled</strong> +{" "}
-              <strong>sponsorships</strong> flags are both on.
+              Appear in their slot within a minute of saving, while the{" "}
+              <strong>ads_enabled</strong> flag is on. (The separate{" "}
+              <strong>sponsorships</strong> flag only controls sponsored job listings.)
             </p>
           </div>
-          <Button type="button" onClick={() => setCreateOpen(true)} className="focus-ring">
+          <Button type="button" onClick={openCreate} className="focus-ring">
             <Plus className="size-4" aria-hidden />
             New placement
           </Button>
@@ -279,9 +342,9 @@ export function AdsManager({
           <EmptyState
             icon={<Megaphone className="size-6" aria-hidden />}
             title="No sponsored placements"
-            description="Create one to promote a course, event or resource — it appears in the chosen slot once sponsorships are enabled."
+            description="Create one to promote a course, event or resource — it appears in the chosen slot once ads_enabled is on."
             action={
-              <Button type="button" onClick={() => setCreateOpen(true)} className="focus-ring">
+              <Button type="button" onClick={openCreate} className="focus-ring">
                 <Plus className="size-4" aria-hidden />
                 New placement
               </Button>
@@ -307,7 +370,7 @@ export function AdsManager({
                     <TableCell className="max-w-[14rem]">
                       <span className="block truncate font-medium">{ad.title}</span>
                       <Badge variant="outline" className="mt-1">
-                        {ad.placement}
+                        {PLACEMENT_LABELS[ad.placement] ?? ad.placement}
                       </Badge>
                     </TableCell>
                     <TableCell className="max-w-[12rem]">
@@ -333,21 +396,43 @@ export function AdsManager({
                       />
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={deleteBusy === ad.id}
-                        onClick={() => void deleteAd(ad)}
-                        className="focus-ring"
-                        aria-label={`Delete ${ad.title}`}
-                      >
-                        {deleteBusy === ad.id ? (
-                          <Loader2 className="size-4 animate-spin" aria-hidden />
-                        ) : (
-                          <Trash2 className="size-4" aria-hidden />
-                        )}
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => openEdit(ad)}
+                          className="focus-ring size-8"
+                          aria-label={`Edit ${ad.title}`}
+                        >
+                          <Pencil className="size-4" aria-hidden />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => openDuplicate(ad)}
+                          className="focus-ring size-8"
+                          aria-label={`Duplicate ${ad.title}`}
+                        >
+                          <Copy className="size-4" aria-hidden />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          disabled={deleteBusy === ad.id}
+                          onClick={() => void deleteAd(ad)}
+                          className="focus-ring text-destructive size-8"
+                          aria-label={`Delete ${ad.title}`}
+                        >
+                          {deleteBusy === ad.id ? (
+                            <Loader2 className="size-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Trash2 className="size-4" aria-hidden />
+                          )}
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -357,14 +442,25 @@ export function AdsManager({
         )}
       </section>
 
-      {/* ---------- Create dialog ---------- */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      {/* ---------- Create / edit dialog ---------- */}
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) {
+            setEditingId(null);
+            setForm(EMPTY_AD);
+          }
+        }}
+      >
         <DialogContent className="scrollbar-slim max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>New sponsored placement</DialogTitle>
+            <DialogTitle>
+              {editingId ? "Edit sponsored placement" : "New sponsored placement"}
+            </DialogTitle>
             <DialogDescription>
-              Validated with the shared ad schema. It renders once the ads_enabled and sponsorships
-              flags are on.
+              Validated with the shared ad schema. Live placements render in their slot within a
+              minute once the ads_enabled flag is on.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -401,8 +497,8 @@ export function AdsManager({
                   </SelectTrigger>
                   <SelectContent>
                     {PLACEMENTS.map((placement) => (
-                      <SelectItem key={placement} value={placement}>
-                        {placement}
+                      <SelectItem key={placement.value} value={placement.value}>
+                        {placement.label} — {placement.hint}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -462,23 +558,19 @@ export function AdsManager({
             <Button
               type="button"
               variant="outline"
-              onClick={() => setCreateOpen(false)}
-              disabled={creating}
+              onClick={() => setDialogOpen(false)}
+              disabled={busy}
             >
               Cancel
             </Button>
             <Button
               type="button"
-              onClick={() => void createAd()}
-              disabled={creating}
+              onClick={() => void saveAd()}
+              disabled={busy}
               className="focus-ring"
             >
-              {creating ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <Plus className="size-4" aria-hidden />
-              )}
-              {creating ? "Creating…" : "Create placement"}
+              {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              {editingId ? "Save changes" : "Create placement"}
             </Button>
           </DialogFooter>
         </DialogContent>

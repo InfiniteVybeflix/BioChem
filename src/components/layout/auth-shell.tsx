@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { FlaskConical } from "lucide-react";
+import { BrandLogo } from "@/components/layout/brand-logo";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 
 /** Shared shell for login/signup/reset pages. */
@@ -25,9 +25,7 @@ export function AuthShell({
           className="focus-ring flex items-center gap-2.5 rounded-lg"
           aria-label="BioChem home"
         >
-          <span className="from-primary to-primary/70 text-primary-foreground shadow-primary/25 flex size-9 items-center justify-center rounded-xl bg-gradient-to-br shadow-lg">
-            <FlaskConical className="size-5" aria-hidden />
-          </span>
+          <BrandLogo className="size-9" />
           <span className="font-heading text-lg font-bold tracking-tight">
             Bio<span className="text-primary">Chem</span>
           </span>

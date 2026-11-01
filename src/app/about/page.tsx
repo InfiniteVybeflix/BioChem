@@ -2,6 +2,7 @@ import Link from "next/link";
 import { FlaskConical, Sparkles, CalendarClock, Users, Briefcase, ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/common/ui-bits";
 import { PublicHeader } from "@/components/layout/public-header";
+import { getAuthContext, getSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata = { title: "About" };
 
@@ -38,10 +39,15 @@ const PILLARS = [
   },
 ];
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  // Auth-aware header — signed-in visitors get "Open app", guests get
+  // "Sign in / Get started". Never errors when Supabase is unconfigured.
+  const supabase = await getSupabaseServerClient();
+  const auth = supabase ? await getAuthContext() : null;
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
-      <PublicHeader />
+      <PublicHeader signedIn={auth !== null} />
       <PageHeader
         title="About BioChem"
         description="The complete biochemistry study platform — exam zones, AI tutor, planner, community and jobs in one installable app."

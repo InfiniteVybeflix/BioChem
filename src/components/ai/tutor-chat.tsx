@@ -202,6 +202,27 @@ export function TutorChat({
     [supabase, activeId],
   );
 
+  const renameConversation = useCallback(
+    async (id: string, title: string) => {
+      if (!supabase) return;
+      const { error } = await supabase
+        .from("ai_conversations")
+        .update({ title })
+        .eq("id", id);
+      if (error) {
+        toast.error(`Could not rename the conversation: ${error.message}`);
+        return;
+      }
+      setConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === id ? { ...conversation, title } : conversation,
+        ),
+      );
+      toast.success("Conversation renamed");
+    },
+    [supabase],
+  );
+
   const searchNotes = useCallback(
     async (query: string) => {
       if (!supabase || query.trim().length < 2) {
@@ -463,6 +484,7 @@ export function TutorChat({
       onSelect={(id) => void loadConversation(id)}
       onNew={startNewConversation}
       onDelete={deleteConversation}
+      onRename={renameConversation}
     />
   );
 

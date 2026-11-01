@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/common/ui-bits";
 import { SetupNotice } from "@/components/common/setup-notice";
 import { ExploreBrowser } from "@/components/exam/explore-browser";
 import type { NoteSummary } from "@/components/exam/note-card";
-import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getAuthContext, getSupabaseServerClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
   title: "Explore notes",
@@ -31,7 +31,8 @@ export default async function ExplorePage() {
     );
   }
 
-  const [notesResult, topicsResult] = await Promise.all([
+  const [auth, notesResult, topicsResult] = await Promise.all([
+    getAuthContext(),
     supabase
       .from("notes")
       .select(
@@ -71,7 +72,7 @@ export default async function ExplorePage() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <PublicHeader />
+      <PublicHeader signedIn={auth !== null} />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 sm:py-10">
         <PageHeader
           title="Explore notes"

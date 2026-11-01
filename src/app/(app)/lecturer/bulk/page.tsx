@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 export default async function LecturerBulkPage() {
   const auth = await getAuthContext();
   if (!auth) redirect("/login");
-  if (!can(auth.profile.role, "publish_content")) redirect("/dashboard");
+  if (!can(auth.profile.role, "publish_content", auth.profile.staff_abilities ?? [])) redirect("/dashboard");
 
   const supabase = await getSupabaseServerClient();
   if (!supabase) {

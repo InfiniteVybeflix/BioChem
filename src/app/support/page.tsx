@@ -32,7 +32,8 @@ export default async function SupportPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
-      <PublicHeader />
+      {/* Auth-aware header — signed-in users see "Open app", not "Get started". */}
+      <PublicHeader signedIn={auth !== null} />
       <PageHeader
         title="Support"
         description="Something broken? Something unfair? Something brilliant? Tell the team."

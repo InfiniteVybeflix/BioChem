@@ -90,7 +90,7 @@ export function UserProvider({
       loading,
       refresh,
       signOut,
-      can: (capability: Capability) => can(role, capability),
+      can: (capability: Capability) => can(role, capability, profile?.staff_abilities ?? []),
     }),
     [supabase, userId, profile, role, loading, refresh, signOut],
   );

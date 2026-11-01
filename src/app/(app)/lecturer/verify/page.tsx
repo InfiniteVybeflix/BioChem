@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 export default async function LecturerVerifyPage() {
   const auth = await getAuthContext();
   if (!auth) redirect("/login");
-  if (!can(auth.profile.role, "verify_answers")) redirect("/dashboard");
+  if (!can(auth.profile.role, "verify_answers", auth.profile.staff_abilities ?? [])) redirect("/dashboard");
 
   const admin = getSupabaseAdminClient();
   if (!admin) {
