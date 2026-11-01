@@ -46,7 +46,18 @@ export function OnboardingWizard({
   const save = async () => {
     if (!supabase || !schoolId || (isStudent && !year)) return;
     setSaving(true);
+
+    // Resolve the user first — updating with an empty id would silently
+    // match nothing and surface as a baffling "try again" error.
     const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) {
+      setSaving(false);
+      toast.error("Your session expired — please sign in again");
+      router.push("/login?next=/onboarding");
+      return;
+    }
+
     const { error } = await supabase
       .from("profiles")
       .update({
@@ -55,7 +66,7 @@ export function OnboardingWizard({
         year_synced_at: new Date().toISOString(),
         onboarding_done: true,
       })
-      .eq("id", userData.user?.id ?? "");
+      .eq("id", userId);
 
     setSaving(false);
     if (error) {
