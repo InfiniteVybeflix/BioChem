@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireAdminApi } from "@/lib/admin/session";
-import { gatewayChat, gatewayConfigured } from "@/lib/ai/gateway";
+import { dbErrorResponse } from "@/lib/admin/api-errors";
+import { gatewayChat, gatewayConfigured, type GatewayMessage } from "@/lib/ai/gateway";
+import { parseDraftArticle, type DraftArticlePayload } from "@/lib/ai/json";
 import { refreshNews } from "@/lib/news/refresh";
 import { newsSettings, toJson, type NewsCategory, type NewsSettings } from "@/types/domain";
 
@@ -15,7 +17,8 @@ import { newsSettings, toJson, type NewsCategory, type NewsSettings } from "@/ty
  *   POST  { action: "update", id, …partial }
  *   POST  { action: "delete", id }
  *   POST  { action: "draft", text }            — AI drafts from pasted text/URL
- *   POST  { action: "refresh" }                — fetch sources now
+ *   POST  { action: "ingest", urls }           — load pages, preview what they're about
+ *   POST  { action: "refresh" }                — fetch sources now (returns found items)
  */
 
 const categorySchema = z.enum(["research", "exams", "campus", "jobs", "general"]);
@@ -81,12 +84,21 @@ const draftSchema = z.object({
   text: z.string().trim().min(20, "Paste the article text or a link").max(60_000),
 });
 
+const ingestSchema = z.object({
+  action: z.literal("ingest"),
+  urls: z
+    .array(z.string().trim().url("Each link must be a valid URL").max(2_000))
+    .min(1, "Add at least one link")
+    .max(5, "Load at most 5 links at a time"),
+});
+
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("settings"), patch: settingsPatchSchema }),
   z.object({ action: z.literal("create") }).merge(createSchema),
   updateSchema,
   z.object({ action: z.literal("delete"), id: z.string().uuid() }),
   draftSchema,
+  ingestSchema,
   z.object({ action: z.literal("refresh") }),
 ]);
 
@@ -163,7 +175,7 @@ export async function GET(): Promise<Response> {
       .limit(100),
   ]);
   if (error) {
-    return Response.json({ error: "Could not load the news desk" }, { status: 502 });
+    return dbErrorResponse("load the news desk", error);
   }
 
   return Response.json({
@@ -173,32 +185,108 @@ export async function GET(): Promise<Response> {
   });
 }
 
-/** Fetch an external article URL and reduce it to readable text for the AI. */
-async function urlToText(url: string): Promise<string | null> {
+/** Fetch an external page and reduce it to readable text + metadata. */
+interface PageExtract {
+  ok: boolean;
+  error?: string;
+  title: string;
+  siteLabel: string;
+  description: string;
+  text: string;
+  wordCount: number;
+  image_url: string | null;
+}
+
+function decodeEntities(input: string): string {
+  return input
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;|&#x27;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)));
+}
+
+function metaContent(html: string, name: string): string {
+  const patterns = [
+    new RegExp(
+      `<meta[^>]+(?:property|name)=["']${name}["'][^>]*content=["']([^"']+)["']`,
+      "i",
+    ),
+    new RegExp(
+      `<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${name}["']`,
+      "i",
+    ),
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return decodeEntities(match[1]).trim();
+  }
+  return "";
+}
+
+async function fetchPage(url: string): Promise<PageExtract> {
+  const failed = (error: string): PageExtract => ({
+    ok: false,
+    error,
+    title: "",
+    siteLabel: "",
+    description: "",
+    text: "",
+    wordCount: 0,
+    image_url: null,
+  });
   try {
     const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    if (!["http:", "https:"].includes(parsed.protocol)) return failed("Only http(s) links work");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
+    const timer = setTimeout(() => controller.abort(), 15_000);
     const response = await fetch(parsed, {
       signal: controller.signal,
-      headers: { "User-Agent": "BioChem-News/1.0 (+https://biokem.vercel.app)" },
+      headers: {
+        "User-Agent": "BioChem-News/1.0 (+https://biokem.vercel.app)",
+        Accept: "text/html,application/xhtml+xml,*/*;q=0.8",
+      },
       cache: "no-store",
+      redirect: "follow",
     });
     clearTimeout(timer);
-    if (!response.ok) return null;
-    const html = await response.text();
-    return html
+    if (!response.ok) return failed(`The site answered ${response.status}`);
+    const html = (await response.text()).slice(0, 900_000);
+
+    const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
+    const title = decodeEntities(titleTag).replace(/\s+/g, " ").trim();
+    const siteLabel = decodeEntities(parsed.hostname.replace(/^www\./, ""));
+    const description = metaContent(html, "og:description") || metaContent(html, "description");
+    const ogImage = metaContent(html, "og:image");
+    const image_url = ogImage
+      ? new URL(ogImage, parsed).toString().slice(0, 2_000)
+      : null;
+
+    const body = html
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]*>/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 12_000);
-  } catch {
-    return null;
+      .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
+      .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
+      .replace(/<header[\s\S]*?<\/header>/gi, " ")
+      .replace(/<[^>]*>/g, " ");
+    const text = decodeEntities(body).replace(/\s+/g, " ").trim();
+    return {
+      ok: true,
+      title,
+      siteLabel,
+      description: description.slice(0, 600),
+      text,
+      wordCount: text ? text.split(" ").length : 0,
+      image_url,
+    };
+  } catch (error) {
+    return failed(
+      error instanceof Error && error.name === "AbortError"
+        ? "The site took too long to answer"
+        : "The page could not be loaded",
+    );
   }
 }
 
@@ -212,6 +300,49 @@ You receive raw material (pasted text or extracted from a URL). Produce ONE stud
 - "source_label": short source name (publication/site) if evident, else "".
 
 Respond with ONLY the JSON object — no markdown fences, no commentary.`;
+
+/**
+ * Ask the AI for the draft with automatic retries. A model response
+ * that isn't valid JSON (fences, chatter, truncation) is retried with
+ * a stricter instruction — the operator should never see raw JSON
+ * errors, let alone click "retry" a handful of times.
+ */
+async function draftWithRetries(
+  material: string,
+  sourceUrl: string | null,
+): Promise<{ draft?: DraftArticlePayload & { source_url: string | null }; error?: string }> {
+  let lastError = "The AI could not draft the article";
+  const attempts = 3;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const messages: GatewayMessage[] = [
+      { role: "system", content: DRAFT_SYSTEM },
+      {
+        role: "user",
+        content:
+          attempt === 0
+            ? `Material:\n"""\n${material.slice(0, 12_000)}\n"""`
+            : `Material:\n"""\n${material.slice(0, 12_000)}\n"""\n\nIMPORTANT: your previous reply was not usable JSON. Answer with ONLY one valid JSON object — start with { and end with } — no fences, no extra words, complete every field.`,
+      },
+    ];
+    try {
+      const result = await gatewayChat("tutor", messages, {
+        temperature: 0.3,
+        maxTokens: 8_000,
+      });
+      const outcome = parseDraftArticle(result.content);
+      const isLastAttempt = attempt === attempts - 1;
+      if (outcome.value && (isLastAttempt || !outcome.truncated)) {
+        return { draft: { ...outcome.value, source_url: sourceUrl } };
+      }
+      lastError = outcome.error ?? "The AI response was cut off";
+      console.warn(`[news] draft attempt ${attempt + 1} unusable: ${lastError}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "The AI draft failed";
+      console.warn(`[news] draft attempt ${attempt + 1} failed: ${lastError}`);
+    }
+  }
+  return { error: lastError };
+}
 
 export async function POST(request: Request): Promise<Response> {
   const denied = await requireAdminApi();
@@ -242,7 +373,7 @@ export async function POST(request: Request): Promise<Response> {
         { key: "news", value: toJson(merged), updated_at: new Date().toISOString() },
         { onConflict: "key" },
       );
-    if (error) return Response.json({ error: "Could not save the news settings" }, { status: 502 });
+    if (error) return dbErrorResponse("save the news settings", error);
     return Response.json({ ok: true, settings: merged });
   }
 
@@ -265,7 +396,7 @@ export async function POST(request: Request): Promise<Response> {
       .select(COLUMNS)
       .single();
     if (error || !data) {
-      return Response.json({ error: "Could not create the article" }, { status: 502 });
+      return dbErrorResponse("create the article", error ?? null);
     }
     return Response.json({ ok: true, article: toRow(data) });
   }
@@ -305,14 +436,14 @@ export async function POST(request: Request): Promise<Response> {
       .select(COLUMNS)
       .single();
     if (error || !data) {
-      return Response.json({ error: "Could not update the article" }, { status: 502 });
+      return dbErrorResponse("update the article", error ?? null);
     }
     return Response.json({ ok: true, article: toRow(data) });
   }
 
   if (body.action === "delete") {
     const { error } = await admin.from("news_articles").delete().eq("id", body.id);
-    if (error) return Response.json({ error: "Could not delete the article" }, { status: 502 });
+    if (error) return dbErrorResponse("delete the article", error);
     return Response.json({ ok: true });
   }
 
@@ -325,53 +456,82 @@ export async function POST(request: Request): Promise<Response> {
     }
     let material = body.text;
     let sourceUrl: string | null = null;
+    let fallbackTitle = "";
+    let fallbackSummary = "";
+    let fallbackLabel = "";
+    let fallbackImage: string | null = null;
     if (/^https?:\/\//i.test(material)) {
       sourceUrl = material;
-      const extracted = await urlToText(material);
-      if (!extracted || extracted.length < 60) {
+      const page = await fetchPage(material);
+      if (!page.ok || page.text.length < 60) {
         return Response.json(
-          { error: "Could not read that page — paste the article text instead" },
+          {
+            error: `Could not read that page${page.error ? ` (${page.error})` : ""} — paste the article text instead`,
+          },
           { status: 422 },
         );
       }
-      material = extracted;
+      fallbackTitle = page.title;
+      fallbackSummary = page.description;
+      fallbackLabel = page.siteLabel;
+      fallbackImage = page.image_url;
+      material = page.text;
     }
-    try {
-      const result = await gatewayChat(
-        "tutor",
-        [
-          { role: "system", content: DRAFT_SYSTEM },
-          { role: "user", content: `Material:\n"""\n${material.slice(0, 12_000)}\n"""` },
-        ],
-        { temperature: 0.3, maxTokens: 4_000 },
-      );
-      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("The AI response was not JSON");
-      const record = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      const title = typeof record["title"] === "string" ? record["title"] : "";
-      if (title.length < 4) throw new Error("The AI returned no usable draft");
-      const categoryRaw =
-        typeof record["category"] === "string" ? record["category"].toLowerCase() : "general";
-      return Response.json({
-        ok: true,
-        draft: {
-          title: title.slice(0, 300),
-          summary: typeof record["summary"] === "string" ? record["summary"].slice(0, 400) : "",
-          content_md: typeof record["content_md"] === "string" ? record["content_md"] : "",
-          category: ["research", "exams", "campus", "jobs", "general"].includes(categoryRaw)
-            ? categoryRaw
-            : "general",
-          source_url: sourceUrl,
-          source_label: typeof record["source_label"] === "string" ? record["source_label"] : "",
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "The AI draft failed";
-      return Response.json({ error: `AI draft failed: ${message}` }, { status: 502 });
+    const result = await draftWithRetries(material, sourceUrl);
+    if (!result.draft) {
+      return Response.json({ error: `AI draft failed: ${result.error}` }, { status: 502 });
     }
+    return Response.json({
+      ok: true,
+      draft: {
+        ...result.draft,
+        title: result.draft.title.slice(0, 300),
+        // When the model omits something the page metadata usually has it.
+        summary: result.draft.summary || fallbackSummary,
+        source_label: result.draft.source_label || fallbackLabel,
+        image_url: fallbackImage,
+      },
+      source_page: sourceUrl
+        ? { title: fallbackTitle, label: fallbackLabel, description: fallbackSummary }
+        : null,
+    });
   }
 
-  // refresh — fetch the sources now.
-  const { ran, result } = await refreshNews(admin, "manual");
-  return Response.json({ ok: true, ran, result: result ?? null });
+  if (body.action === "ingest") {
+    // Load each URL and report what the page is about — no AI, no
+    // database writes. The operator reviews the previews, then turns
+    // any of them into a draft with the AI.
+    const previews = await Promise.all(
+      body.urls.map(async (url) => {
+        const page = await fetchPage(url);
+        if (!page.ok) {
+          return { url, ok: false as const, error: page.error ?? "Could not load the page" };
+        }
+        const previewText = page.text.slice(0, 900);
+        return {
+          url,
+          ok: true as const,
+          title: page.title || url,
+          site_label: page.siteLabel,
+          description: page.description,
+          text_preview: previewText,
+          word_count: page.wordCount,
+          image_url: page.image_url,
+        };
+      }),
+    );
+    return Response.json({ ok: true, previews });
+  }
+
+  // refresh — fetch the sources now and report every found item.
+  try {
+    const { ran, result } = await refreshNews(admin, "manual");
+    return Response.json({ ok: true, ran, result: result ?? null });
+  } catch (error) {
+    console.error("[news] manual refresh crashed:", error);
+    return Response.json(
+      { error: "The news fetch crashed — open System → Database setup if this repeats" },
+      { status: 502 },
+    );
+  }
 }

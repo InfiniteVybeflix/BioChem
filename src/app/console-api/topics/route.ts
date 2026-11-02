@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireAdminApi } from "@/lib/admin/session";
+import { dbErrorResponse } from "@/lib/admin/api-errors";
 import { slugify } from "@/lib/content/schema";
 
 /**
@@ -108,7 +109,15 @@ export async function GET(): Promise<Response> {
     .order("order_index")
     .order("title");
   if (error) {
-    return Response.json({ error: "Could not load topics" }, { status: 502 });
+    // Embedded counts can fail where a plain select works (e.g. a
+    // pending migration) — degrade instead of erroring the tab.
+    const fallback = await admin
+      .from("topics")
+      .select("id, title, slug, zone, description, order_index")
+      .order("order_index")
+      .order("title");
+    if (fallback.error) return dbErrorResponse("load topics", fallback.error);
+    return Response.json({ topics: (fallback.data ?? []).map(toListRow) });
   }
   return Response.json({ topics: (data ?? []).map(toListRow) });
 }
@@ -154,7 +163,7 @@ export async function POST(request: Request): Promise<Response> {
       .select("id, title, slug, zone, description, order_index")
       .single();
     if (error || !data) {
-      return Response.json({ error: "Could not create the topic" }, { status: 502 });
+      return dbErrorResponse("create the topic", error ?? null);
     }
     return Response.json({
       ok: true,
@@ -186,13 +195,13 @@ export async function POST(request: Request): Promise<Response> {
       .select("id, title, slug, zone, description, order_index, notes(count), questions(count)")
       .single();
     if (error || !data) {
-      return Response.json({ error: "Could not update the topic" }, { status: 502 });
+      return dbErrorResponse("update the topic", error ?? null);
     }
     return Response.json({ ok: true, topic: toListRow(data as RawTopicRow) });
   }
 
   // delete — cascades to notes, questions, outcomes, discussions…
   const { error } = await admin.from("topics").delete().eq("id", body.id);
-  if (error) return Response.json({ error: "Could not delete the topic" }, { status: 502 });
+  if (error) return dbErrorResponse("delete the topic", error);
   return Response.json({ ok: true });
 }

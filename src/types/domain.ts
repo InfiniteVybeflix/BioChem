@@ -168,6 +168,7 @@ export interface NewsListItem {
   category: NewsCategory;
   source_url: string | null;
   source_label: string | null;
+  image_url: string | null;
   pinned: boolean;
   published_at: string | null;
 }
@@ -423,7 +424,9 @@ export function newsSettings(value: unknown): NewsSettings {
     .filter((entry): entry is NewsSource => entry !== null);
   const interval = record?.["interval_hours"];
   return {
-    enabled: record?.["enabled"] === true,
+    // On by default — publishing must reach students without a hidden
+    // switch; the console master switch turns the module off explicitly.
+    enabled: record?.["enabled"] !== false,
     show_on_landing: record?.["show_on_landing"] !== false,
     show_in_app: record?.["show_in_app"] !== false,
     auto_search: record?.["auto_search"] === true,

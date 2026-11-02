@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireAdminApi } from "@/lib/admin/session";
+import { dbErrorResponse } from "@/lib/admin/api-errors";
 import { adSchema } from "@/lib/validation";
 import type { AdPlacement } from "@/types/domain";
 import type { Database } from "@/types/domain";
@@ -159,7 +160,7 @@ export async function POST(request: Request): Promise<Response> {
         { key: body.key, enabled: body.enabled, updated_at: new Date().toISOString() },
         { onConflict: "key" },
       );
-    if (error) return Response.json({ error: "Could not toggle the flag" }, { status: 502 });
+    if (error) return dbErrorResponse("toggle the flag", error);
     return Response.json({ ok: true });
   }
 
@@ -203,15 +204,16 @@ export async function POST(request: Request): Promise<Response> {
     if (error || !data) {
       const missing = (error?.message ?? "").toLowerCase().includes("0 rows")
         ? "That placement no longer exists — refresh the list"
-        : "Could not update the placement";
-      return Response.json({ error: missing }, { status: 502 });
+        : null;
+      if (missing) return Response.json({ error: missing }, { status: 502 });
+      return dbErrorResponse("update the placement", error ?? null);
     }
     return Response.json({ ok: true, ad: rowPayload(data) });
   }
 
   if (body.action === "delete") {
     const { error } = await admin.from("ads").delete().eq("id", body.id);
-    if (error) return Response.json({ error: "Could not remove the placement" }, { status: 502 });
+    if (error) return dbErrorResponse("remove the placement", error);
     return Response.json({ ok: true });
   }
 
@@ -244,7 +246,7 @@ export async function POST(request: Request): Promise<Response> {
     });
   }
   if (error || !data) {
-    return Response.json({ error: "Could not create the placement" }, { status: 502 });
+    return dbErrorResponse("create the placement", error ?? null);
   }
   return Response.json({ ok: true, ad: rowPayload(data) });
 }

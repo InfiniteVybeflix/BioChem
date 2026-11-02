@@ -27,6 +27,7 @@ interface NewsRow {
   category: string;
   source_url: string | null;
   source_label: string | null;
+  image_url: string | null;
   pinned: boolean;
   published_at: string | null;
 }
@@ -39,6 +40,7 @@ function toListItem(row: NewsRow): NewsListItem {
     category: isNewsCategory(row.category) ? row.category : "general",
     source_url: row.source_url,
     source_label: row.source_label,
+    image_url: row.image_url ?? null,
     pinned: row.pinned,
     published_at: row.published_at,
   };
@@ -55,7 +57,9 @@ export async function loadPublishedNews(
 ): Promise<NewsListItem[]> {
   const { data } = await client
     .from("news_articles")
-    .select("id, title, summary, category, source_url, source_label, pinned, published_at")
+    .select(
+      "id, title, summary, category, source_url, source_label, image_url, pinned, published_at",
+    )
     .eq("status", "published")
     .order("pinned", { ascending: false })
     .order("published_at", { ascending: false, nullsFirst: false })

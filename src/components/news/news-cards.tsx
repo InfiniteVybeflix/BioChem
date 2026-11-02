@@ -50,6 +50,15 @@ export function NewsCard({ article }: { article: NewsListItem }) {
   const date = newsDate(article.published_at);
   return (
     <article className="glass-card hover:border-primary/30 flex h-full flex-col p-5 transition-colors">
+      {article.image_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={article.image_url}
+          alt=""
+          loading="lazy"
+          className="border-border/60 mb-3 h-36 w-full rounded-lg border object-cover"
+        />
+      ) : null}
       <div className="flex items-center gap-2">
         <Badge
           variant="outline"

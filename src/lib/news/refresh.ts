@@ -6,7 +6,8 @@ import {
   type NewsSettings,
   type NewsSource,
 } from "@/types/domain";
-import { gatewayChat, gatewayConfigured } from "@/lib/ai/gateway";
+import { gatewayChat, gatewayConfigured, type GatewayMessage } from "@/lib/ai/gateway";
+import { parseDigestArticles, type DigestArticlePayload } from "@/lib/ai/json";
 
 /**
  * BioChem news pipeline — live updates from the internet.
@@ -20,8 +21,8 @@ import { gatewayChat, gatewayConfigured } from "@/lib/ai/gateway";
  * 5. Insert as published (auto_publish on) or as drafts for review,
  *    and stamp the run onto the settings JSON.
  *
- * Runs from the console ("Update now"), from the Vercel cron route
- * (/api/cron/news) and lazily from the student-facing pages when the
+ * Runs from the console ("Fetch now"), from the Vercel cron route
+ * (/api/cron/news) and lazily from the landing page when the
  * configured interval has elapsed.
  */
 
@@ -33,13 +34,28 @@ interface FeedItem {
   sourceLabel: string;
 }
 
+/** One article the pipeline created this run — shown in the review panel. */
+export interface RefreshedItem {
+  id: string;
+  title: string;
+  summary: string;
+  source_url: string | null;
+  source_label: string | null;
+  status: "draft" | "published";
+  category: NewsCategory;
+}
+
 export interface RefreshResult {
   added: number;
   published: number;
   skipped: number;
   sourcesOk: number;
   sourcesFailed: number;
+  /** Which sources failed, so "Fetch now" can say exactly what was unreachable. */
+  failedSources: string[];
   aiDigested: boolean;
+  /** The articles this run created — the review panel lists them. */
+  items: RefreshedItem[];
   error?: string;
 }
 
@@ -162,13 +178,20 @@ For each item output a JSON object:
 - "summary": one-sentence hook a student would click (max 220 chars).
 - "content_md": 2-4 short paragraphs in Markdown a 2nd-year biochemistry student understands. Connect the finding to course concepts (enzymes, metabolism, molecular biology, lab techniques) when natural; end with a one-line "Why it matters" bullet. Be faithful to the source — never invent facts, numbers or quotes.
 - "category": one of research | exams | campus | jobs | general.
+- "source_url": the item link, unchanged.
+- "source_label": the item's source name, unchanged.
 
 Rules:
-- Keep the given source_url and source_label exactly.
+- Keep every given source_url and source_label exactly.
 - Write in clear English (Kenyan university audience).
 - Respond with ONLY a JSON array — no markdown fences, no commentary.`;
 
-/** Digest raw feed items into student articles via the AI gateway. */
+/**
+ * Digest raw feed items into student articles via the AI gateway.
+ * Retries once with a stricter instruction when the reply isn't a
+ * usable JSON list; each item is then validated independently so one
+ * bad entry never sinks the batch.
+ */
 async function aiDigest(items: FeedItem[]): Promise<DraftArticle[]> {
   const payload = items.map((item) => ({
     title: item.title,
@@ -176,41 +199,51 @@ async function aiDigest(items: FeedItem[]): Promise<DraftArticle[]> {
     source_url: item.link,
     source_label: item.sourceLabel,
   }));
-  const result = await gatewayChat(
-    "tutor",
-    [
-      { role: "system", content: DIGEST_SYSTEM },
-      {
-        role: "user",
-        content: `Write the news articles now:\n${JSON.stringify(payload, null, 2)}`,
-      },
-    ],
-    { temperature: 0.3, maxTokens: 12_000 },
-  );
+  const baseMessages: GatewayMessage[] = [
+    { role: "system", content: DIGEST_SYSTEM },
+    {
+      role: "user",
+      content: `Write the news articles now:\n${JSON.stringify(payload, null, 2)}`,
+    },
+  ];
 
-  const fenced = result.content.match(/\[[\s\S]*\]/);
-  if (!fenced) throw new Error("The AI response was not a JSON list");
-  const parsed: unknown = JSON.parse(fenced[0]);
-  if (!Array.isArray(parsed)) throw new Error("The AI response was not a JSON list");
-
-  return parsed.map((entry): DraftArticle | null => {
-      const record = (entry ?? {}) as Record<string, unknown>;
-      const title = typeof record["title"] === "string" ? record["title"].trim() : "";
-      const sourceUrl = typeof record["source_url"] === "string" ? record["source_url"] : null;
-      const sourceLabel =
-        typeof record["source_label"] === "string" ? record["source_label"] : null;
-      if (title.length < 6 || !sourceUrl) return null;
-      const categoryRaw =
-        typeof record["category"] === "string" ? record["category"].toLowerCase() : "general";
-      return {
-        title: title.slice(0, 300),
-        summary: typeof record["summary"] === "string" ? record["summary"].trim().slice(0, 400) : "",
-        content_md: typeof record["content_md"] === "string" ? record["content_md"].trim() : "",
-        category: isNewsCategory(categoryRaw) ? categoryRaw : "general",
-        source_url: sourceUrl,
-        source_label: sourceLabel,
-      } satisfies DraftArticle;
-    }).filter((entry): entry is DraftArticle => entry !== null);
+  let lastError = "The AI response was not a JSON list";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const messages: GatewayMessage[] =
+        attempt === 0
+          ? baseMessages
+          : [
+              { role: "system", content: DIGEST_SYSTEM },
+              {
+                role: "user",
+                content: `${JSON.stringify(payload, null, 2)}\n\nIMPORTANT: your previous reply was not usable JSON. Respond with ONLY a valid JSON array — start with [ and end with ] — one object per item, no fences, no commentary.`,
+              },
+            ];
+      const result = await gatewayChat("tutor", messages, {
+        temperature: 0.3,
+        maxTokens: 12_000,
+      });
+      const outcome = parseDigestArticles(result.content);
+      const isLastAttempt = attempt === 1;
+      if (outcome.value && (isLastAttempt || !outcome.truncated)) {
+        return outcome.value.map((entry: DigestArticlePayload) => ({
+          title: entry.title.slice(0, 300),
+          summary: entry.summary,
+          content_md: entry.content_md,
+          category: isNewsCategory(entry.category) ? entry.category : "general",
+          source_url: entry.source_url,
+          source_label: entry.source_label,
+        }));
+      }
+      lastError = outcome.error ?? "The AI response was cut off";
+      console.warn(`[news] digest attempt ${attempt + 1} unusable: ${lastError}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "The AI digest failed";
+      console.warn(`[news] digest attempt ${attempt + 1} failed: ${lastError}`);
+    }
+  }
+  throw new Error(lastError);
 }
 
 function rawArticle(item: FeedItem): DraftArticle {
@@ -296,24 +329,40 @@ async function runPipeline(
     skipped: 0,
     sourcesOk: 0,
     sourcesFailed: 0,
+    failedSources: [],
     aiDigested: false,
+    items: [],
   };
   if (enabledSources.length === 0) {
-    result.error = "No sources enabled";
+    result.error = "No sources enabled — add at least one RSS source";
     return result;
   }
 
   // Already-stored links — never import the same story twice.
-  const { data: existing } = await admin.from("news_articles").select("dedupe_key");
+  const { data: existing, error: existingError } = await admin
+    .from("news_articles")
+    .select("dedupe_key");
+  if (existingError) {
+    result.error = existingError.message.includes("does not exist")
+      ? "The news table isn't set up — open System → Database setup"
+      : existingError.message;
+    return result;
+  }
   const seen = new Set((existing ?? []).map((row) => row.dedupe_key));
 
-  const feedResults = await Promise.all(enabledSources.map((source) => fetchFeed(source)));
+  const feedResults = await Promise.all(
+    enabledSources.map(async (source) => ({ source, items: await fetchFeed(source) })),
+  );
   const keywords = keywordList(settings.interests);
 
   const candidates: FeedItem[] = [];
-  feedResults.forEach((items) => {
-    if (items.length > 0) result.sourcesOk += 1;
-    else result.sourcesFailed += 1;
+  for (const { source, items } of feedResults) {
+    if (items.length > 0) {
+      result.sourcesOk += 1;
+    } else {
+      result.sourcesFailed += 1;
+      result.failedSources.push(source.label);
+    }
     for (const item of items) {
       if (seen.has(item.link)) {
         result.skipped += 1;
@@ -324,8 +373,13 @@ async function runPipeline(
       candidates.push(item);
       if (candidates.length >= MAX_ITEMS_PER_RUN) break;
     }
-  });
-  if (candidates.length === 0) return result;
+  }
+  if (candidates.length === 0) {
+    if (result.sourcesFailed > 0 && result.sourcesOk === 0) {
+      result.error = `All ${result.sourcesFailed} source(s) were unreachable`;
+    }
+    return result;
+  }
 
   // AI digest when the gateway is configured — otherwise raw items.
   let articles: DraftArticle[] = [];
@@ -344,27 +398,43 @@ async function runPipeline(
   const publish = overrides?.auto_publish ?? settings.auto_publish;
   const nowIso = new Date().toISOString();
   for (const article of articles) {
-    const { error } = await admin.from("news_articles").insert({
-      title: article.title,
-      summary: article.summary,
-      content_md: article.content_md,
-      category: article.category,
-      source_url: article.source_url,
-      source_label: article.source_label,
-      status: publish ? "published" : "draft",
-      auto: true,
-      dedupe_key: article.source_url,
-      published_at: publish ? nowIso : null,
-    });
-    if (error) {
+    const { data, error } = await admin
+      .from("news_articles")
+      .insert({
+        title: article.title,
+        summary: article.summary,
+        content_md: article.content_md,
+        category: article.category,
+        source_url: article.source_url,
+        source_label: article.source_label,
+        status: publish ? "published" : "draft",
+        auto: true,
+        dedupe_key: article.source_url,
+        published_at: publish ? nowIso : null,
+      })
+      .select("id, title, summary, source_url, source_label, status, category")
+      .single();
+    if (error || !data) {
       // Unique-violation on dedupe_key → another run beat us to it.
-      if (!error.message.toLowerCase().includes("duplicate")) {
+      if (error && !error.message.toLowerCase().includes("duplicate")) {
         console.error("[news] insert failed:", error.message);
+        if (error.message.includes("does not exist") && !result.error) {
+          result.error = "The news table isn't set up — open System → Database setup";
+        }
       }
       continue;
     }
     result.added += 1;
     if (publish) result.published += 1;
+    result.items.push({
+      id: data.id,
+      title: data.title,
+      summary: data.summary,
+      source_url: data.source_url,
+      source_label: data.source_label,
+      status: data.status === "published" ? "published" : "draft",
+      category: isNewsCategory(data.category) ? data.category : "general",
+    });
   }
   return result;
 }

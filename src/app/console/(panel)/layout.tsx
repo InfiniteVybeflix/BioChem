@@ -30,6 +30,7 @@ export default async function ConsolePanelLayout({ children }: { children: React
     { href: `${base}/analytics`, label: "Analytics" },
     { href: `${base}/import`, label: "Import" },
     { href: `${base}/export`, label: "Export" },
+    { href: `${base}/system`, label: "System" },
   ];
 
   return (
