@@ -410,6 +410,23 @@ export function NewsManager({
       toast.error("Give the article a headline");
       return;
     }
+    // Keep every field inside the server's limits — Publish should
+    // never bounce the article back with a length error. The operator
+    // is told exactly what was trimmed.
+    const clamped: FormState = {
+      ...form,
+      title: title.slice(0, 300),
+      summary: form.summary.trim().slice(0, 400),
+      content_md: form.content_md.slice(0, 40_000),
+      source_url: form.source_url.trim().slice(0, 2_000),
+      source_label: form.source_label.trim().slice(0, 120),
+      image_url: form.image_url.trim().slice(0, 2_000),
+    };
+    const trims: string[] = [];
+    if (form.summary.trim().length > 400) trims.push("Summary trimmed to 400 characters");
+    if (form.content_md.length > 40_000) trims.push("Body trimmed to 40,000 characters");
+    if (form.source_label.trim().length > 120) trims.push("Source name trimmed to 120 characters");
+    if (trims.length > 0) toast.message(trims.join(" · "));
     setBusy(true);
     try {
       const payload = editingId
@@ -417,26 +434,26 @@ export function NewsManager({
             action: "update" as const,
             id: editingId,
             title,
-            summary: form.summary.trim(),
-            content_md: form.content_md,
-            category: form.category,
-            source_url: form.source_url.trim() || null,
-            source_label: form.source_label.trim() || null,
-            image_url: form.image_url.trim() || null,
-            status: form.status,
-            pinned: form.pinned,
+            summary: clamped.summary,
+            content_md: clamped.content_md,
+            category: clamped.category,
+            source_url: clamped.source_url || null,
+            source_label: clamped.source_label || null,
+            image_url: clamped.image_url || null,
+            status: clamped.status,
+            pinned: clamped.pinned,
           }
         : {
             action: "create" as const,
             title,
-            summary: form.summary.trim(),
-            content_md: form.content_md,
-            category: form.category,
-            source_url: form.source_url.trim() || null,
-            source_label: form.source_label.trim() || null,
-            image_url: form.image_url.trim() || null,
-            status: form.status,
-            pinned: form.pinned,
+            summary: clamped.summary,
+            content_md: clamped.content_md,
+            category: clamped.category,
+            source_url: clamped.source_url || null,
+            source_label: clamped.source_label || null,
+            image_url: clamped.image_url || null,
+            status: clamped.status,
+            pinned: clamped.pinned,
           };
       const response = await fetch(consoleUrl(base, "api/news"), {
         method: "POST",

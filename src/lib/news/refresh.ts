@@ -222,18 +222,18 @@ async function aiDigest(items: FeedItem[]): Promise<DraftArticle[]> {
             ];
       const result = await gatewayChat("tutor", messages, {
         temperature: 0.3,
-        maxTokens: 12_000,
+        maxTokens: 8_000,
       });
       const outcome = parseDigestArticles(result.content);
       const isLastAttempt = attempt === 1;
       if (outcome.value && (isLastAttempt || !outcome.truncated)) {
         return outcome.value.map((entry: DigestArticlePayload) => ({
           title: entry.title.slice(0, 300),
-          summary: entry.summary,
+          summary: entry.summary.slice(0, 400),
           content_md: entry.content_md,
           category: isNewsCategory(entry.category) ? entry.category : "general",
           source_url: entry.source_url,
-          source_label: entry.source_label,
+          source_label: (entry.source_label ?? "").slice(0, 120),
         }));
       }
       lastError = outcome.error ?? "The AI response was cut off";

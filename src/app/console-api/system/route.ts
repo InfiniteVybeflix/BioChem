@@ -87,13 +87,24 @@ const FIX_SQL = `-- ============================================================
 -- ============================================================
 
 -- ---------- helper trigger function ----------
+-- Defensive version: only stamps updated_at on tables that actually
+-- have the column (ads didn't, which broke ad edits + impression
+-- counters with "record \"new\" has no field \"updated_at\"").
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
 begin
-  new.updated_at := now();
+  if to_jsonb(new) ? 'updated_at' then
+    new.updated_at := now();
+  end if;
   return new;
 end;
 $$;
+
+-- ---------- ads: the missing updated_at column ----------
+-- Must run BEFORE any update on ads, or the set_updated_at trigger
+-- aborts every statement (see migration 00021).
+alter table public.ads
+  add column if not exists updated_at timestamptz not null default now();
 
 -- ---------- news desk ----------
 create table if not exists public.news_articles (

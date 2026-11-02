@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireAdminApi } from "@/lib/admin/session";
-import { dbErrorResponse } from "@/lib/admin/api-errors";
+import { dbErrorResponse, zodFieldMessage } from "@/lib/admin/api-errors";
 import { gatewayChat, gatewayConfigured, type GatewayMessage } from "@/lib/ai/gateway";
 import { parseDraftArticle, type DraftArticlePayload } from "@/lib/ai/json";
 import { refreshNews } from "@/lib/news/refresh";
@@ -327,7 +327,7 @@ async function draftWithRetries(
     try {
       const result = await gatewayChat("tutor", messages, {
         temperature: 0.3,
-        maxTokens: 8_000,
+        maxTokens: 4_000,
       });
       const outcome = parseDraftArticle(result.content);
       const isLastAttempt = attempt === attempts - 1;
@@ -351,7 +351,7 @@ export async function POST(request: Request): Promise<Response> {
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid news payload" },
+      { error: zodFieldMessage(parsed.error) ?? "Invalid news payload" },
       { status: 422 },
     );
   }
@@ -486,9 +486,10 @@ export async function POST(request: Request): Promise<Response> {
       draft: {
         ...result.draft,
         title: result.draft.title.slice(0, 300),
-        // When the model omits something the page metadata usually has it.
-        summary: result.draft.summary || fallbackSummary,
-        source_label: result.draft.source_label || fallbackLabel,
+        // Stay inside the create/update limits so Publish never bounces
+        // the draft back with a length error.
+        summary: (result.draft.summary || fallbackSummary).slice(0, 400),
+        source_label: (result.draft.source_label || fallbackLabel).slice(0, 120),
         image_url: fallbackImage,
       },
       source_page: sourceUrl

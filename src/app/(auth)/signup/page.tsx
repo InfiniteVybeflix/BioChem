@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Clock3, GraduationCap, Loader2, Presentation, UserPlus } from "lucide-react";
+import { Clock3, GraduationCap, Loader2, Mail, Presentation, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,36 @@ import { isSupabaseConfigured } from "@/lib/env";
 import { toast } from "sonner";
 
 type Portal = "student" | "staff";
+
+/**
+ * Translate raw Supabase auth errors into guidance a new student can
+ * act on. The mailer failure ("Error sending confirmation email") is a
+ * server-side email configuration/limit issue, not something the user
+ * did wrong — say so plainly instead of showing the raw string.
+ */
+function friendlySignupError(raw: string): string {
+  const message = raw.toLowerCase();
+  if (message.includes("sending confirmation email") || message.includes("error sending")) {
+    return (
+      "Your account was created, but the confirmation email could not be sent right now " +
+      "(the email service is briefly unavailable or hit its sending limit). " +
+      "Wait a minute, then tap “Resend confirmation email” below."
+    );
+  }
+  if (message.includes("rate limit")) {
+    return "Too many attempts in a short time — wait a few minutes and try again.";
+  }
+  if (message.includes("already registered") || message.includes("already exists")) {
+    return "That email already has an account — sign in instead, or reset your password.";
+  }
+  if (message.includes("password")) {
+    return "Password needs at least 8 characters.";
+  }
+  if (message.includes("invalid") && message.includes("email")) {
+    return "That email address doesn't look valid — check it and try again.";
+  }
+  return raw;
+}
 
 /**
  * Sign-up with the same two doors as sign-in. Staff accounts are
@@ -32,6 +62,33 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
+  const [showResend, setShowResend] = useState(false);
+
+  /** Offered when the confirmation email failed to go out. */
+  const resendConfirmation = async () => {
+    if (!supabase) return;
+    setResending(true);
+    setError(null);
+    const { error: resendError } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+    });
+    setResending(false);
+    if (resendError) {
+      setError(
+        resendError.message.toLowerCase().includes("rate limit")
+          ? "The email service is rate-limiting us — wait a minute and try again."
+          : `Still couldn't send the email: ${resendError.message}`,
+      );
+      return;
+    }
+    setShowResend(false);
+    toast.success("Confirmation email sent", {
+      description: `Check ${email} — the link expires after a while, so use it soon.`,
+    });
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -56,7 +113,15 @@ export default function SignupPage() {
 
     if (signUpError) {
       setPending(false);
-      setError(signUpError.message);
+      setError(friendlySignupError(signUpError.message));
+      // The mailer failure means the account EXISTS but has no way to
+      // confirm — surface the resend action right here.
+      if (
+        signUpError.message.toLowerCase().includes("sending confirmation email") ||
+        signUpError.message.toLowerCase().includes("error sending")
+      ) {
+        setShowResend(true);
+      }
       return;
     }
 
@@ -174,6 +239,23 @@ export default function SignupPage() {
           >
             {error}
           </p>
+        ) : null}
+
+        {showResend ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={resending || email.trim().length === 0}
+            onClick={resendConfirmation}
+          >
+            {resending ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Mail className="size-4" aria-hidden />
+            )}
+            {resending ? "Sending…" : "Resend confirmation email"}
+          </Button>
         ) : null}
 
         <Button type="submit" className="w-full gap-2" disabled={pending}>

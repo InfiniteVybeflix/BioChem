@@ -92,8 +92,15 @@ async function fetchWithTimeout(
 }
 
 /**
- * Sends a chat completion request with exponential-backoff retry
- * (network errors, 408, 429, 5xx — up to 2 retries).
+ * Sends a chat completion with exponential-backoff retry (network
+ * errors, 408, 429, 5xx — up to 2 retries).
+ *
+ * A 400 is special-cased: gateways reject `temperature` / `max_tokens`
+ * they don't support for the requested model, so the first 400 is
+ * retried immediately without the optional parameters before the
+ * error is treated as fatal. The gateway's own response body is
+ * included in the error message so the console can show WHY the
+ * request was rejected instead of a bare "responded 400".
  */
 export async function gatewayChat(
   task: AiTask,
@@ -110,27 +117,57 @@ export async function gatewayChat(
   const url = `${baseUrl.replace(/\/+$/, "")}${env.gatewayChatPath()}`;
   const startedAt = Date.now();
 
+  const send = (withOptionalParams: boolean): Promise<Response> =>
+    fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Aevibron-Key": apiKey,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          ...(withOptionalParams && options.temperature !== undefined
+            ? { temperature: options.temperature }
+            : {}),
+          ...(withOptionalParams && options.maxTokens !== undefined
+            ? { max_tokens: options.maxTokens }
+            : {}),
+        }),
+      },
+      env.gatewayTimeoutMs(),
+    );
+
+  /** Pull a short, human-readable reason out of a gateway error body. */
+  async function rejectionDetail(response: Response): Promise<string> {
+    try {
+      const text = (await response.text()).slice(0, 300);
+      if (!text) return "";
+      try {
+        const payload = JSON.parse(text) as { error?: { message?: string }; message?: string };
+        const detail = payload.error?.message ?? payload.message ?? text;
+        return ` — ${String(detail).slice(0, 200)}`;
+      } catch {
+        return ` — ${text.slice(0, 200)}`;
+      }
+    } catch {
+      return "";
+    }
+  }
+
   let lastError: GatewayError = new GatewayError("Gateway request failed");
 
   for (let attempt = 0; attempt <= 2; attempt++) {
     try {
-      const response = await fetchWithTimeout(
-        url,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Aevibron-Key": apiKey,
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-            ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-          }),
-        },
-        env.gatewayTimeoutMs(),
-      );
+      let response = await send(true);
+
+      if (response.status === 400 && (options.temperature !== undefined || options.maxTokens !== undefined)) {
+        // The model/gateway may not accept the optional parameters —
+        // retry once in the gateway's default configuration.
+        response = await send(false);
+      }
 
       if (response.ok) {
         const payload: unknown = await response.json();
@@ -140,8 +177,9 @@ export async function gatewayChat(
 
       const retriable =
         response.status === 408 || response.status === 429 || response.status >= 500;
+      const detail = await rejectionDetail(response);
       lastError = new GatewayError(
-        `Gateway responded ${response.status}`,
+        `Gateway responded ${response.status}${detail}`,
         response.status,
         retriable,
       );

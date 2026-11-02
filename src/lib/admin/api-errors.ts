@@ -53,3 +53,50 @@ export function dbErrorResponse(
     { status },
   );
 }
+
+/** Human labels for the fields the console validates. */
+const FIELD_LABELS: Record<string, string> = {
+  title: "Headline",
+  summary: "Summary",
+  content_md: "Article body",
+  category: "Category",
+  source_url: "Source link",
+  source_label: "Source name",
+  image_url: "Image URL",
+  status: "Status",
+  pinned: "Pin",
+  text: "Source material",
+  urls: "Links",
+  id: "ID",
+  patch: "Settings",
+  interests: "Interest keywords",
+  sources: "Sources",
+};
+
+interface ZodIssueLike {
+  code?: string;
+  path?: (string | number | symbol)[];
+  message?: string;
+  maximum?: number | bigint;
+  minimum?: number | bigint;
+}
+
+/**
+ * Turn a Zod validation error into one plain-English sentence that
+ * NAMES the field — "Summary is too long (max 400 characters)" beats a
+ * bare "Too big: expected string to have ≤400 characters" the operator
+ * can't act on.
+ */
+export function zodFieldMessage(error: { issues: ZodIssueLike[] }): string | null {
+  const issue = error.issues[0];
+  if (!issue) return null;
+  const fieldKey = String(issue.path?.[0] ?? "");
+  const label = FIELD_LABELS[fieldKey] ?? fieldKey;
+  if (issue.code === "too_big" && issue.maximum !== undefined) {
+    return `${label} is too long — keep it to ${issue.maximum.toString()} characters or fewer.`;
+  }
+  if (issue.code === "too_small" && issue.minimum !== undefined) {
+    return `${label} is too short — it needs at least ${issue.minimum.toString()} characters.`;
+  }
+  return issue.message ?? null;
+}
