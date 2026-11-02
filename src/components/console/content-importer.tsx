@@ -5,6 +5,7 @@ import Papa from "papaparse";
 import { toast } from "sonner";
 import {
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   FileText,
   FolderTree,
@@ -145,6 +146,21 @@ const STATUS_LABEL: Record<StagedStatus, string> = {
   failed: "Failed",
 };
 
+/** Save generated CSV locally — "BOT201 notes.pdf" → "BOT201 notes.csv". */
+function downloadCsv(sourceName: string, csv: string): void {
+  const name = `${sourceName.replace(/\.[^.]+$/, "") || "converted"}.csv`;
+  const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  toast.success(`Saved ${name}`);
+}
+
 export function ContentImporter({
   topics = [],
   schools = [],
@@ -169,6 +185,7 @@ export function ContentImporter({
   // AI converter state.
   const [material, setMaterial] = useState("");
   const [materialInfo, setMaterialInfo] = useState<string | null>(null);
+  const [materialFileName, setMaterialFileName] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [converting, setConverting] = useState(false);
   const [count, setCount] = useState(15);
@@ -398,9 +415,11 @@ export function ContentImporter({
     }
     setExtracting(true);
     setMaterialInfo(null);
+    setMaterialFileName(null);
     try {
       const text = await extractFileText(file);
       setMaterial(text);
+      setMaterialFileName(file.name);
       setMaterialInfo(`${file.name} — text extracted. Review it, then convert with AI.`);
       toast.success("Document text extracted — review it, then convert with AI");
     } catch (error) {
@@ -448,6 +467,7 @@ export function ContentImporter({
   const resetAi = () => {
     setMaterial("");
     setMaterialInfo(null);
+    setMaterialFileName(null);
     setConversion(null);
     setReviewText("");
   };
@@ -1092,6 +1112,19 @@ export function ContentImporter({
                           </p>
                         ) : null}
                       </div>
+                      {item.csv ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="focus-ring"
+                          aria-label={`Download the CSV for ${item.name}`}
+                          onClick={() => downloadCsv(item.name, item.csv as string)}
+                        >
+                          <Download className="size-3.5" aria-hidden />
+                          CSV
+                        </Button>
+                      ) : null}
                       {item.status === "ready" ? (
                         <Button
                           type="button"
@@ -1266,19 +1299,31 @@ export function ContentImporter({
                   Edit anything above before importing — with a destination topic chosen every row is
                   already filed there; otherwise missing topics are auto-created on import.
                 </p>
-                <Button
-                  type="button"
-                  disabled={pending || conversion.rowCount === 0}
-                  className="focus-ring"
-                  onClick={() => importText(reviewText)}
-                >
-                  {pending ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
-                  ) : (
-                    <Upload className="size-4" aria-hidden />
-                  )}
-                  {pending ? "Importing…" : `Import ${kind}`}
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    disabled={pending || conversion.rowCount === 0}
+                    className="focus-ring"
+                    onClick={() => importText(reviewText)}
+                  >
+                    {pending ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Upload className="size-4" aria-hidden />
+                    )}
+                    {pending ? "Importing…" : `Import ${kind}`}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={conversion.rowCount === 0 || !reviewText.trim()}
+                    className="focus-ring"
+                    onClick={() => downloadCsv(materialFileName ?? "converted", reviewText)}
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Download CSV
+                  </Button>
+                </div>
               </div>
             ) : null}
           </div>
