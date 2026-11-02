@@ -22,6 +22,7 @@ export default async function ConsolePanelLayout({ children }: { children: React
     { href: `${base}/moderation`, label: "Moderation" },
     { href: `${base}/schools`, label: "Schools" },
     { href: `${base}/settings`, label: "CMS" },
+    { href: `${base}/content`, label: "Content" },
     { href: `${base}/news`, label: "News desk" },
     { href: `${base}/ads`, label: "Ads & flags" },
     { href: `${base}/jobs`, label: "Jobs" },
