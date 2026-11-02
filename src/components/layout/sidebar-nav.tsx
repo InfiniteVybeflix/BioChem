@@ -41,6 +41,7 @@ const SECTIONS: NavSection[] = [
     title: "Study",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Course Units", href: "/units", icon: BookOpen },
       { label: "Exam Zones", href: "/zones", icon: Layers },
       { label: "Outcomes", href: "/outcomes", icon: CalendarCheck },
       { label: "Question Bank", href: "/questions", icon: ClipboardCheck },

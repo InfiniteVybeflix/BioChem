@@ -14,13 +14,24 @@
 -- ============================================================
 
 -- ---------- helper trigger function ----------
+-- Defensive version: only stamps updated_at on tables that actually
+-- have the column. (ads didn't — the unguarded assignment aborted
+-- every ads write with 42703, which also killed this script itself.)
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
 begin
-  new.updated_at := now();
+  if to_jsonb(new) ? 'updated_at' then
+    new.updated_at := now();
+  end if;
   return new;
 end;
 $$;
+
+-- ---------- ads: the missing updated_at column ----------
+-- Must exist BEFORE any update runs against ads, or the
+-- set_updated_at trigger aborts the statement (see migration 00021/00022).
+alter table public.ads
+  add column if not exists updated_at timestamptz not null default now();
 
 -- ---------- news desk ----------
 create table if not exists public.news_articles (
@@ -56,6 +67,8 @@ create trigger set_updated_at_news_articles
 
 -- ---------- ads: multi-placement + size ----------
 alter table public.ads add column if not exists placements text[] not null default '{}';
+-- (ads.updated_at is ensured right after the trigger function above,
+--  so this update can no longer trip the trigger.)
 update public.ads set placements = array[placement::text]
 where cardinality(placements) = 0;
 create or replace function public.ads_sync_placement()

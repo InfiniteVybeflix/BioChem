@@ -320,6 +320,7 @@ export function NewsManager({
           source_label: string;
           image_url: string | null;
         };
+        ai_note?: string;
       };
       setForm((prev) => ({
         ...prev,
@@ -331,7 +332,11 @@ export function NewsManager({
         source_label: data.draft.source_label || prev.source_label,
         image_url: data.draft.image_url ?? prev.image_url,
       }));
-      toast.success("AI draft ready — review and adjust below");
+      if (data.ai_note) {
+        toast.message(data.ai_note);
+      } else {
+        toast.success("AI draft ready — review and adjust below");
+      }
     } catch {
       toast.error("Network error — try again");
     } finally {
@@ -394,7 +399,7 @@ export function NewsManager({
       source_label: preview.site_label ?? "",
       image_url: preview.image_url ?? "",
       title: preview.title && preview.title.length >= 4 ? preview.title : "",
-      summary: preview.description ?? "",
+      summary: (preview.description ?? "").slice(0, 400),
     }));
     setRawMaterial(preview.url);
     try {

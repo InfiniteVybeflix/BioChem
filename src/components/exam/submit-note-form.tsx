@@ -34,6 +34,10 @@ export interface FormTopic {
   title: string;
   slug: string;
   zone: ExamZone;
+  /** Course-unit scoping (populated by the server pages when present). */
+  unitId?: string | null;
+  unitCode?: string | null;
+  unitName?: string | null;
 }
 
 type NoteInput = z.input<typeof noteSubmissionSchema>;
@@ -47,6 +51,63 @@ const DEFAULT_VALUES: NoteInput = {
   summary: "",
   tags: [],
 };
+
+/**
+ * Topic options grouped the way content is organised: first by course unit
+ * (BIO 205 · Biochemistry of Plants), then by exam zone for topics without
+ * a unit. With no units in play this renders exactly like the old
+ * zone-grouped picker. Shared with the question submission form.
+ */
+export function TopicGroups({ topics }: { topics: FormTopic[] }) {
+  const unitGroups = new Map<string, { label: string; topics: FormTopic[] }>();
+  const unassigned: FormTopic[] = [];
+  for (const topic of topics) {
+    if (topic.unitId && topic.unitCode) {
+      const group =
+        unitGroups.get(topic.unitId) ??
+        ({
+          label: topic.unitName
+            ? `${topic.unitCode} · ${topic.unitName}`
+            : (topic.unitCode ?? "Unit"),
+          topics: [],
+        } as { label: string; topics: FormTopic[] });
+      group.topics.push(topic);
+      unitGroups.set(topic.unitId, group);
+    } else {
+      unassigned.push(topic);
+    }
+  }
+  const hasUnits = unitGroups.size > 0;
+
+  return (
+    <>
+      {[...unitGroups.values()].map((group) => (
+        <SelectGroup key={group.label}>
+          <SelectLabel>{group.label}</SelectLabel>
+          {group.topics.map((topic) => (
+            <SelectItem key={topic.id} value={topic.id}>
+              {topic.title}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      ))}
+      {ZONES.map((zone) => {
+        const zoneTopics = unassigned.filter((topic) => topic.zone === zone.id);
+        if (zoneTopics.length === 0) return null;
+        return (
+          <SelectGroup key={zone.id}>
+            <SelectLabel>{hasUnits ? `${zone.label} (no unit)` : zone.label}</SelectLabel>
+            {zoneTopics.map((topic) => (
+              <SelectItem key={topic.id} value={topic.id}>
+                {topic.title}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        );
+      })}
+    </>
+  );
+}
 
 interface SharedItem {
   content: string;
@@ -86,11 +147,18 @@ function fieldError(message: string | undefined): React.ReactNode {
 }
 
 /**
- * Note contribution form: topic (grouped by zone), title, summary, tag chips,
- * markdown/LaTeX content with a live preview toggle. Validates with the shared
- * noteSubmissionSchema and inserts a pending row into `submissions`.
+ * Note contribution form: topic (grouped by unit, then zone), title, summary,
+ * tag chips, markdown/LaTeX content with a live preview toggle. Validates with
+ * the shared noteSubmissionSchema and inserts a pending row into `submissions`.
  */
-export function SubmitNoteForm({ topics }: { topics: FormTopic[] }) {
+export function SubmitNoteForm({
+  topics,
+  initialTopicId,
+}: {
+  topics: FormTopic[];
+  /** Pre-selected topic (arriving from a unit page's "contribute here" CTA). */
+  initialTopicId?: string;
+}) {
   const { supabase, userId } = useUser();
   const [pending, setPending] = useState(false);
   const [preview, setPreview] = useState(false);
@@ -99,7 +167,7 @@ export function SubmitNoteForm({ topics }: { topics: FormTopic[] }) {
 
   const form = useForm<NoteInput, unknown, NoteOutput>({
     resolver: zodResolver(noteSubmissionSchema),
-    defaultValues: DEFAULT_VALUES,
+    defaultValues: { ...DEFAULT_VALUES, topicId: initialTopicId ?? "" },
   });
 
   const tags = useWatch({ control: form.control, name: "tags" }) ?? [];
@@ -195,18 +263,7 @@ export function SubmitNoteForm({ topics }: { topics: FormTopic[] }) {
                   <SelectValue placeholder="Choose a topic" />
                 </SelectTrigger>
                 <SelectContent>
-                  {ZONES.map((zone) => (
-                    <SelectGroup key={zone.id}>
-                      <SelectLabel>{zone.label}</SelectLabel>
-                      {topics
-                        .filter((topic) => topic.zone === zone.id)
-                        .map((topic) => (
-                          <SelectItem key={topic.id} value={topic.id}>
-                            {topic.title}
-                          </SelectItem>
-                        ))}
-                    </SelectGroup>
-                  ))}
+                  <TopicGroups topics={topics} />
                 </SelectContent>
               </Select>
             )}

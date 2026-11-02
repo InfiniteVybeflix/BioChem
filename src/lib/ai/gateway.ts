@@ -23,6 +23,13 @@ export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
+  /**
+   * Extra models tried (one param-free attempt each) when the primary
+   * model is rejected. A gateway can have a single broken/overloaded
+   * model while the rest still work — the news desk keeps working by
+   * silently moving to the next one.
+   */
+  fallbackModels?: AiModel[];
 }
 
 export interface ChatResult {
@@ -92,15 +99,19 @@ async function fetchWithTimeout(
 }
 
 /**
- * Sends a chat completion with exponential-backoff retry (network
- * errors, 408, 429, 5xx — up to 2 retries).
+ * Sends a chat completion with retry + model fallback.
  *
- * A 400 is special-cased: gateways reject `temperature` / `max_tokens`
- * they don't support for the requested model, so the first 400 is
- * retried immediately without the optional parameters before the
- * error is treated as fatal. The gateway's own response body is
- * included in the error message so the console can show WHY the
- * request was rejected instead of a bare "responded 400".
+ *   * network errors, 408, 429, 5xx — retried with backoff (up to 2 retries)
+ *   * 400 — gateways reject `temperature` / `max_tokens` they don't support
+ *     for the requested model, so the first 400 is retried immediately
+ *     without the optional parameters before the error is treated as fatal
+ *   * `fallbackModels` — when the primary model still fails, each fallback
+ *     gets one param-free attempt, so one broken model never takes a
+ *     feature down.
+ *
+ * The gateway's own response body is included in the error message so the
+ * console can show WHY the request was rejected instead of a bare
+ * "responded 400".
  */
 export async function gatewayChat(
   task: AiTask,
@@ -113,11 +124,12 @@ export async function gatewayChat(
     throw new GatewayError("Aevibron gateway is not configured", undefined, false);
   }
 
-  const model = options.model ?? modelForTask(task);
+  const primary = options.model ?? modelForTask(task);
+  const models = [primary, ...(options.fallbackModels ?? []).filter((m) => m !== primary)];
   const url = `${baseUrl.replace(/\/+$/, "")}${env.gatewayChatPath()}`;
   const startedAt = Date.now();
 
-  const send = (withOptionalParams: boolean): Promise<Response> =>
+  const send = (model: AiModel, withOptionalParams: boolean): Promise<Response> =>
     fetchWithTimeout(
       url,
       {
@@ -158,49 +170,76 @@ export async function gatewayChat(
   }
 
   let lastError: GatewayError = new GatewayError("Gateway request failed");
+  const rejected: string[] = [];
 
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    try {
-      let response = await send(true);
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+    const model = models[modelIndex];
+    const isPrimary = modelIndex === 0;
+    // The primary model gets the full retry loop; fallback models get a
+    // single param-free attempt each (they exist to dodge a broken
+    // primary, not to absorb its load).
+    const attempts = isPrimary ? 3 : 1;
 
-      if (response.status === 400 && (options.temperature !== undefined || options.maxTokens !== undefined)) {
-        // The model/gateway may not accept the optional parameters —
-        // retry once in the gateway's default configuration.
-        response = await send(false);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        let response = await send(model, isPrimary);
+
+        if (
+          isPrimary &&
+          response.status === 400 &&
+          (options.temperature !== undefined || options.maxTokens !== undefined)
+        ) {
+          // The model/gateway may not accept the optional parameters —
+          // retry once in the gateway's default configuration.
+          response = await send(model, false);
+        }
+
+        if (response.ok) {
+          const payload: unknown = await response.json();
+          const content = parseGatewayContent(payload);
+          return { content, model, latencyMs: Date.now() - startedAt };
+        }
+
+        const retriable =
+          response.status === 408 || response.status === 429 || response.status >= 500;
+        const detail = await rejectionDetail(response);
+        lastError = new GatewayError(
+          `Gateway responded ${response.status}${detail}`,
+          response.status,
+          retriable,
+        );
+        rejected.push(`"${model}": ${response.status}`);
+        if (!retriable) break; // a different model may still work
+      } catch (error) {
+        if (error instanceof GatewayError && !error.retriable) {
+          lastError = error;
+          rejected.push(`"${model}": ${error.message}`);
+          break;
+        }
+        lastError =
+          error instanceof GatewayError
+            ? error
+            : new GatewayError(
+                error instanceof Error ? error.message : "Network error contacting gateway",
+                undefined,
+                true,
+              );
       }
 
-      if (response.ok) {
-        const payload: unknown = await response.json();
-        const content = parseGatewayContent(payload);
-        return { content, model, latencyMs: Date.now() - startedAt };
+      if (attempt < attempts - 1) {
+        await sleep(500 * 2 ** attempt); // 500ms, 1s
       }
-
-      const retriable =
-        response.status === 408 || response.status === 429 || response.status >= 500;
-      const detail = await rejectionDetail(response);
-      lastError = new GatewayError(
-        `Gateway responded ${response.status}${detail}`,
-        response.status,
-        retriable,
-      );
-      if (!retriable) throw lastError;
-    } catch (error) {
-      if (error instanceof GatewayError && !error.retriable) throw error;
-      lastError =
-        error instanceof GatewayError
-          ? error
-          : new GatewayError(
-              error instanceof Error ? error.message : "Network error contacting gateway",
-              undefined,
-              true,
-            );
     }
-
-    if (attempt < 2) {
-      await sleep(500 * 2 ** attempt); // 500ms, 1s
-    }
+    // Fall through to the next model.
   }
 
+  if (models.length > 1 && rejected.length > 0) {
+    throw new GatewayError(
+      `${lastError.message} (tried ${rejected.join(", ")})`,
+      lastError.status,
+      lastError.retriable,
+    );
+  }
   throw lastError;
 }
 

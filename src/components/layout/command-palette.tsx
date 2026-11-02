@@ -112,6 +112,7 @@ export function CommandPalette() {
   const studyItems = useMemo(
     () => [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Course Units", href: "/units", icon: BookOpen },
       { label: "Exam Zones", href: "/zones", icon: Layers },
       { label: "Question Bank", href: "/questions", icon: ClipboardCheck },
       { label: "Mock Exams", href: "/mocks", icon: GraduationCap },

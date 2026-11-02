@@ -9,14 +9,16 @@ import { slugify } from "@/lib/content/schema";
  * questions, discussions and every importer resolve against.
  *
  *   GET  → { topics: [{ id, title, slug, zone, description, orderIndex,
- *                     notesCount, questionsCount }] }
- *   POST { action: "create", title, zone, description?, orderIndex? }
- *   POST { action: "update", id, title?, zone?, description?, orderIndex? }
+ *                     unitId, unitCode, unitName, notesCount, questionsCount }] }
+ *   POST { action: "create", title, zone, description?, orderIndex?, unitId? }
+ *   POST { action: "update", id, title?, zone?, description?, orderIndex?, unitId? }
  *   POST { action: "delete", id }   (cascades to the topic's notes &
  *                                   questions — the UI confirms first)
  *
  * Slugs are generated from the title (deduped) at creation and stay
  * stable afterwards, so nothing that links to a topic ever breaks.
+ * A topic can live inside a course unit (BIO 205 …) — the unit is the
+ * student-facing home on /units; the zone stays for the exam banks.
  */
 
 const zoneSchema = z.enum(["cat1", "cat2", "main"]);
@@ -27,6 +29,7 @@ const createSchema = z.object({
   zone: zoneSchema,
   description: z.string().trim().max(500).optional(),
   orderIndex: z.coerce.number().int().min(0).max(9999).optional(),
+  unitId: z.string().uuid().nullable().optional(),
 });
 
 const updateSchema = z.object({
@@ -36,6 +39,7 @@ const updateSchema = z.object({
   zone: zoneSchema.optional(),
   description: z.string().trim().max(500).nullable().optional(),
   orderIndex: z.coerce.number().int().min(0).max(9999).optional(),
+  unitId: z.string().uuid().nullable().optional(),
 });
 
 const deleteSchema = z.object({
@@ -52,6 +56,9 @@ export interface TopicListRow {
   zone: "cat1" | "cat2" | "main";
   description: string | null;
   orderIndex: number;
+  unitId: string | null;
+  unitCode: string | null;
+  unitName: string | null;
   notesCount: number;
   questionsCount: number;
 }
@@ -63,6 +70,8 @@ interface RawTopicRow {
   zone: string;
   description: string | null;
   order_index: number;
+  unit_id?: string | null;
+  units?: { code?: string; name?: string } | null;
   notes?: { count: number }[];
   questions?: { count: number }[];
 }
@@ -75,6 +84,9 @@ function toListRow(row: RawTopicRow): TopicListRow {
     zone: zoneSchema.safeParse(row.zone).success ? (row.zone as "cat1" | "cat2" | "main") : "main",
     description: row.description,
     orderIndex: row.order_index,
+    unitId: row.unit_id ?? null,
+    unitCode: row.units?.code ?? null,
+    unitName: row.units?.name ?? null,
     notesCount: row.notes?.[0]?.count ?? 0,
     questionsCount: row.questions?.[0]?.count ?? 0,
   };
@@ -105,7 +117,9 @@ export async function GET(): Promise<Response> {
 
   const { data, error } = await admin
     .from("topics")
-    .select("id, title, slug, zone, description, order_index, notes(count), questions(count)")
+    .select(
+      "id, title, slug, zone, description, order_index, unit_id, units(code, name), notes(count), questions(count)",
+    )
     .order("order_index")
     .order("title");
   if (error) {
@@ -113,7 +127,7 @@ export async function GET(): Promise<Response> {
     // pending migration) — degrade instead of erroring the tab.
     const fallback = await admin
       .from("topics")
-      .select("id, title, slug, zone, description, order_index")
+      .select("id, title, slug, zone, description, order_index, unit_id")
       .order("order_index")
       .order("title");
     if (fallback.error) return dbErrorResponse("load topics", fallback.error);
@@ -159,10 +173,32 @@ export async function POST(request: Request): Promise<Response> {
         zone: body.zone,
         description: body.description?.trim() ? body.description.trim() : null,
         order_index: orderIndex,
+        unit_id: body.unitId ?? null,
       })
-      .select("id, title, slug, zone, description, order_index")
+      .select("id, title, slug, zone, description, order_index, unit_id, units(code, name)")
       .single();
     if (error || !data) {
+      // A unit id that doesn't exist (or a pending migration) shouldn't
+      // kill the whole create — retry without the unit assignment.
+      if (body.unitId) {
+        const retry = await admin
+          .from("topics")
+          .insert({
+            title: body.title,
+            slug,
+            zone: body.zone,
+            description: body.description?.trim() ? body.description.trim() : null,
+            order_index: orderIndex,
+          })
+          .select("id, title, slug, zone, description, order_index, unit_id")
+          .single();
+        if (!retry.error && retry.data) {
+          return Response.json({
+            ok: true,
+            topic: toListRow({ ...retry.data, notes: [{ count: 0 }], questions: [{ count: 0 }] }),
+          });
+        }
+      }
       return dbErrorResponse("create the topic", error ?? null);
     }
     return Response.json({
@@ -177,6 +213,7 @@ export async function POST(request: Request): Promise<Response> {
       zone?: "cat1" | "cat2" | "main";
       description?: string | null;
       order_index?: number;
+      unit_id?: string | null;
     } = {};
     if (body.title !== undefined) patch.title = body.title;
     if (body.zone !== undefined) patch.zone = body.zone;
@@ -184,6 +221,7 @@ export async function POST(request: Request): Promise<Response> {
       patch.description = body.description?.trim() ? body.description.trim() : null;
     }
     if (body.orderIndex !== undefined) patch.order_index = body.orderIndex;
+    if (body.unitId !== undefined) patch.unit_id = body.unitId;
     if (Object.keys(patch).length === 0) {
       return Response.json({ error: "Nothing to update" }, { status: 422 });
     }
@@ -192,7 +230,9 @@ export async function POST(request: Request): Promise<Response> {
       .from("topics")
       .update(patch)
       .eq("id", body.id)
-      .select("id, title, slug, zone, description, order_index, notes(count), questions(count)")
+      .select(
+        "id, title, slug, zone, description, order_index, unit_id, units(code, name), notes(count), questions(count)",
+      )
       .single();
     if (error || !data) {
       return dbErrorResponse("update the topic", error ?? null);

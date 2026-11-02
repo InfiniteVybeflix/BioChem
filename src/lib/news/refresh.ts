@@ -222,7 +222,11 @@ async function aiDigest(items: FeedItem[]): Promise<DraftArticle[]> {
             ];
       const result = await gatewayChat("tutor", messages, {
         temperature: 0.3,
-        maxTokens: 8_000,
+        // Keep the output budget close to what 14 short articles need —
+        // asking for more than a model supports is a classic 400.
+        maxTokens: 4_000,
+        // One broken model on the gateway must not kill the digest.
+        fallbackModels: ["flash-v3.5", "swift-v1"],
       });
       const outcome = parseDigestArticles(result.content);
       const isLastAttempt = attempt === 1;

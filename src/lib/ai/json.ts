@@ -92,23 +92,54 @@ function repairTruncated(chunk: string, open: string, close: string): string | n
   return `${text}${close}`;
 }
 
+/**
+ * The AI is asked for short fields but models overshoot — a 450-char
+ * summary or 320-char headline is a GOOD draft, not a failure. Accept
+ * generous inputs and clamp to the sizes the console/API expect, so a
+ * usable draft never bounces back as a validation error.
+ */
 export const draftArticleSchema = z.object({
-  title: z.string().trim().min(4).max(300),
-  summary: z.string().trim().max(400).default(""),
+  title: z
+    .string()
+    .trim()
+    .min(4)
+    .max(600)
+    .transform((value) => value.slice(0, 300)),
+  summary: z
+    .string()
+    .trim()
+    .max(2_000)
+    .transform((value) => value.slice(0, 400))
+    .default(""),
   content_md: z.string().max(40_000).default(""),
   category: z
     .string()
     .transform((value) => value.trim().toLowerCase())
     .pipe(z.enum(["research", "exams", "campus", "jobs", "general"]))
     .catch("general"),
-  source_label: z.string().trim().max(120).default(""),
+  source_label: z
+    .string()
+    .trim()
+    .max(240)
+    .transform((value) => value.slice(0, 120))
+    .default(""),
 });
 
 export type DraftArticlePayload = z.infer<typeof draftArticleSchema>;
 
 export const digestArticleSchema = z.object({
-  title: z.string().trim().min(6).max(300),
-  summary: z.string().trim().max(400).default(""),
+  title: z
+    .string()
+    .trim()
+    .min(6)
+    .max(600)
+    .transform((value) => value.slice(0, 300)),
+  summary: z
+    .string()
+    .trim()
+    .max(2_000)
+    .transform((value) => value.slice(0, 400))
+    .default(""),
   content_md: z.string().max(40_000).default(""),
   category: z
     .string()
@@ -116,7 +147,12 @@ export const digestArticleSchema = z.object({
     .pipe(z.enum(["research", "exams", "campus", "jobs", "general"]))
     .catch("general"),
   source_url: z.string().url(),
-  source_label: z.string().trim().max(120).nullish().transform((value) => value ?? null),
+  source_label: z
+    .string()
+    .trim()
+    .max(240)
+    .nullish()
+    .transform((value) => (value ? value.slice(0, 120) : null)),
 });
 
 export type DigestArticlePayload = z.infer<typeof digestArticleSchema>;

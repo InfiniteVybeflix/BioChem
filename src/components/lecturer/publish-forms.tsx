@@ -83,7 +83,14 @@ function readingMinutesOf(contentMd: string): number {
  * live immediately: notes with status "published", questions from "bank", and
  * past paper PDFs uploaded to the public past-papers storage bucket.
  */
-export function PublishForms({ topics }: { topics: FormTopic[] }) {
+export function PublishForms({
+  topics,
+  initialTopicId,
+}: {
+  topics: FormTopic[];
+  /** Pre-selected topic (arriving from a unit page's "publish here" CTA). */
+  initialTopicId?: string;
+}) {
   return (
     <Tabs defaultValue="note" className="gap-5">
       <TabsList className="max-w-full overflow-x-auto">
@@ -92,10 +99,10 @@ export function PublishForms({ topics }: { topics: FormTopic[] }) {
         <TabsTrigger value="past-paper">Past paper</TabsTrigger>
       </TabsList>
       <TabsContent value="note">
-        <NoteForm topics={topics} />
+        <NoteForm topics={topics} initialTopicId={initialTopicId} />
       </TabsContent>
       <TabsContent value="question">
-        <QuestionForm topics={topics} />
+        <QuestionForm topics={topics} initialTopicId={initialTopicId} />
       </TabsContent>
       <TabsContent value="past-paper">
         <PastPaperForm />
@@ -104,6 +111,12 @@ export function PublishForms({ topics }: { topics: FormTopic[] }) {
   );
 }
 
+/**
+ * Topic picker, grouped the way content is organised: first by course unit
+ * (BIO 205 · Biochemistry of Plants), then by exam zone for topics without
+ * a unit. With no units in play this renders exactly like the old
+ * zone-grouped picker.
+ */
 function TopicSelect({
   topics,
   value,
@@ -115,30 +128,71 @@ function TopicSelect({
   onChange: (value: string) => void;
   id: string;
 }) {
+  const unitGroups = new Map<
+    string,
+    { label: string; topics: FormTopic[] }
+  >();
+  const unassigned: FormTopic[] = [];
+  for (const topic of topics) {
+    if (topic.unitId && topic.unitCode) {
+      const group =
+        unitGroups.get(topic.unitId) ??
+        ({
+          label: topic.unitName
+            ? `${topic.unitCode} · ${topic.unitName}`
+            : (topic.unitCode ?? "Unit"),
+          topics: [],
+        } as { label: string; topics: FormTopic[] });
+      group.topics.push(topic);
+      unitGroups.set(topic.unitId, group);
+    } else {
+      unassigned.push(topic);
+    }
+  }
+  const hasUnits = unitGroups.size > 0;
+
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger id={id} className="w-full" aria-label="Choose a topic">
         <SelectValue placeholder="Choose a topic" />
       </SelectTrigger>
       <SelectContent>
-        {ZONES.map((zone) => (
-          <SelectGroup key={zone.id}>
-            <SelectLabel>{zone.label}</SelectLabel>
-            {topics
-              .filter((topic) => topic.zone === zone.id)
-              .map((topic) => (
+        {[...unitGroups.values()].map((group) => (
+          <SelectGroup key={group.label}>
+            <SelectLabel>{group.label}</SelectLabel>
+            {group.topics.map((topic) => (
+              <SelectItem key={topic.id} value={topic.id}>
+                {topic.title}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        ))}
+        {ZONES.map((zone) => {
+          const zoneTopics = unassigned.filter((topic) => topic.zone === zone.id);
+          if (zoneTopics.length === 0) return null;
+          return (
+            <SelectGroup key={zone.id}>
+              <SelectLabel>{hasUnits ? `${zone.label} (no unit)` : zone.label}</SelectLabel>
+              {zoneTopics.map((topic) => (
                 <SelectItem key={topic.id} value={topic.id}>
                   {topic.title}
                 </SelectItem>
               ))}
-          </SelectGroup>
-        ))}
+            </SelectGroup>
+          );
+        })}
       </SelectContent>
     </Select>
   );
 }
 
-function NoteForm({ topics }: { topics: FormTopic[] }) {
+function NoteForm({
+  topics,
+  initialTopicId,
+}: {
+  topics: FormTopic[];
+  initialTopicId?: string;
+}) {
   const router = useRouter();
   const { supabase, userId } = useUser();
   const [pending, setPending] = useState(false);
@@ -148,7 +202,13 @@ function NoteForm({ topics }: { topics: FormTopic[] }) {
 
   const form = useForm<NoteInput, unknown, NoteOutput>({
     resolver: zodResolver(noteFormSchema),
-    defaultValues: { topicId: "", title: "", contentMd: "", summary: "", tags: [] },
+    defaultValues: {
+      topicId: initialTopicId ?? "",
+      title: "",
+      contentMd: "",
+      summary: "",
+      tags: [],
+    },
   });
 
   const tags = useWatch({ control: form.control, name: "tags" }) ?? [];
@@ -366,14 +426,20 @@ function NoteForm({ topics }: { topics: FormTopic[] }) {
   );
 }
 
-function QuestionForm({ topics }: { topics: FormTopic[] }) {
+function QuestionForm({
+  topics,
+  initialTopicId,
+}: {
+  topics: FormTopic[];
+  initialTopicId?: string;
+}) {
   const { supabase, userId } = useUser();
   const [pending, setPending] = useState(false);
 
   const form = useForm<QuestionInput, unknown, QuestionOutput>({
     resolver: zodResolver(questionFormSchema),
     defaultValues: {
-      topicId: "",
+      topicId: initialTopicId ?? "",
       zone: "cat1",
       difficulty: "medium",
       type_question: "mcq",

@@ -2107,6 +2107,7 @@ export type Database = {
           school_id: string | null
           slug: string
           title: string
+          unit_id: string | null
           updated_at: string
           year: number | null
           zone: Database["public"]["Enums"]["exam_zone"]
@@ -2121,6 +2122,7 @@ export type Database = {
           school_id?: string | null
           slug: string
           title: string
+          unit_id?: string | null
           updated_at?: string
           year?: number | null
           zone: Database["public"]["Enums"]["exam_zone"]
@@ -2135,6 +2137,7 @@ export type Database = {
           school_id?: string | null
           slug?: string
           title?: string
+          unit_id?: string | null
           updated_at?: string
           year?: number | null
           zone?: Database["public"]["Enums"]["exam_zone"]
@@ -2156,6 +2159,63 @@ export type Database = {
           },
           {
             foreignKeyName: "topics_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "topics_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      units: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          id: string
+          is_active: boolean
+          name: string
+          order_index: number
+          school_id: string
+          semester: number | null
+          updated_at: string
+          year: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          order_index?: number
+          school_id: string
+          semester?: number | null
+          updated_at?: string
+          year: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          order_index?: number
+          school_id?: string
+          semester?: number | null
+          updated_at?: string
+          year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "units_school_id_fkey"
             columns: ["school_id"]
             isOneToOne: false
             referencedRelation: "schools"

@@ -4,12 +4,18 @@
 
 -- ---------- helpers ----------
 
+-- Defensive: only stamps updated_at on tables that actually have the
+-- column. ads (00005) was created without one — an unguarded
+-- `new.updated_at := now()` aborted every ads write with
+-- ERROR 42703 "record "new" has no field "updated_at"".
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
 as $$
 begin
-  new.updated_at := now();
+  if to_jsonb(new) ? 'updated_at' then
+    new.updated_at := now();
+  end if;
   return new;
 end;
 $$;

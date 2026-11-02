@@ -5,6 +5,7 @@ import { SetupNotice } from "@/components/common/setup-notice";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SubmitNoteForm } from "@/components/exam/submit-note-form";
 import { SubmitQuestionForm } from "@/components/exam/submit-question-form";
+import type { FormTopic } from "@/components/exam/submit-note-form";
 import { SubmissionsList, type SubmissionLite } from "@/components/exam/submissions-list";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -18,8 +19,15 @@ export const metadata: Metadata = {
  * Contribute page: note + question submission forms (validated with the shared
  * Zod schemas) and a live list of the user's own submissions with reviewer
  * feedback. Realtime updates arrive via the channel in <SubmissionsList>.
+ *
+ * Accepts ?unit=<id> (from a course-unit page) and ?topic=<slug> so the
+ * note form opens pre-aimed at the right unit's topic.
  */
-export default async function SubmitPage() {
+export default async function SubmitPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const supabase = await getSupabaseServerClient();
   if (!supabase) {
     return (
@@ -33,8 +41,17 @@ export default async function SubmitPage() {
     );
   }
 
+  const query = await searchParams;
+  const firstParam = (value: string | string[] | undefined): string | null =>
+    Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
+  const unitParam = firstParam(query.unit);
+  const topicParam = firstParam(query.topic);
+
   const [topicsResult, submissionsResult] = await Promise.all([
-    supabase.from("topics").select("id, title, slug, zone").order("order_index"),
+    supabase
+      .from("topics")
+      .select("id, title, slug, zone, unit_id, units(code, name)")
+      .order("order_index"),
     supabase
       .from("submissions")
       .select("id, type, title, status, review_notes, created_at")
@@ -42,12 +59,42 @@ export default async function SubmitPage() {
       .limit(25),
   ]);
 
-  const topics = (topicsResult.data ?? []).map((topic) => ({
+  // If the units join can't resolve yet (pending setup SQL) fall back to
+  // a plain topic select so contributing keeps working.
+  type TopicOptionRow = {
+    id: string;
+    title: string;
+    slug: string;
+    zone: FormTopic["zone"];
+    unit_id: string | null;
+    units: { code: string; name: string } | null;
+  };
+  let topicRows = (topicsResult.data ?? []) as unknown as TopicOptionRow[];
+  if (topicsResult.error) {
+    const fallback = await supabase
+      .from("topics")
+      .select("id, title, slug, zone, unit_id")
+      .order("order_index");
+    topicRows = (fallback.data ?? []) as unknown as TopicOptionRow[];
+  }
+
+  const topics: FormTopic[] = topicRows.map((topic) => ({
     id: topic.id,
     title: topic.title,
     slug: topic.slug,
     zone: topic.zone,
+    unitId: topic.unit_id ?? null,
+    unitCode: topic.units?.code ?? null,
+    unitName: topic.units?.name ?? null,
   }));
+
+  // Pre-aim the form: explicit topic wins, else the first topic of the
+  // unit the student arrived from.
+  const initialTopicId = topicParam
+    ? (topics.find((topic) => topic.slug === topicParam)?.id ?? undefined)
+    : unitParam
+      ? (topics.find((topic) => topic.unitId === unitParam)?.id ?? undefined)
+      : undefined;
 
   // RLS scopes this to the signed-in user's own submissions.
   const submissions: SubmissionLite[] = (submissionsResult.data ?? []).map((row) => ({
@@ -77,12 +124,12 @@ export default async function SubmitPage() {
         </TabsList>
         <TabsContent value="note" className="mt-4">
           <div className="glass-card p-4 sm:p-6">
-            <SubmitNoteForm topics={topics} />
+            <SubmitNoteForm topics={topics} initialTopicId={initialTopicId} />
           </div>
         </TabsContent>
         <TabsContent value="question" className="mt-4">
           <div className="glass-card p-4 sm:p-6">
-            <SubmitQuestionForm topics={topics} />
+            <SubmitQuestionForm topics={topics} initialTopicId={initialTopicId} />
           </div>
         </TabsContent>
       </Tabs>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { FolderTree, Layers, Loader2, Palette, Save, Sparkles } from "lucide-react";
+import { FolderTree, GraduationCap, Layers, Loader2, Palette, Save, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,12 +76,15 @@ export function CmsSettings({
   initial,
   featuresSlot,
   topicsSlot,
+  unitsSlot,
 }: {
   initial: CmsValues;
   /** CMS → Features tab: landing-page feature cards + module switches. */
   featuresSlot?: ReactNode;
   /** CMS → Topics tab: the content topic tree the importers resolve against. */
   topicsSlot?: ReactNode;
+  /** CMS → Units tab: course units (BIO 205 …) scoped to school + year. */
+  unitsSlot?: ReactNode;
 }) {
   const base = useConsoleBase();
   const [values, setValues] = useState<CmsValues>(initial);
@@ -137,6 +140,11 @@ export function CmsSettings({
           {topicsSlot ? (
             <TabsTrigger value="topics" className="flex-1 gap-1.5 sm:flex-none">
               <FolderTree className="size-3.5" aria-hidden /> Topics
+            </TabsTrigger>
+          ) : null}
+          {unitsSlot ? (
+            <TabsTrigger value="units" className="flex-1 gap-1.5 sm:flex-none">
+              <GraduationCap className="size-3.5" aria-hidden /> Units
             </TabsTrigger>
           ) : null}
         </TabsList>
@@ -241,6 +249,11 @@ export function CmsSettings({
         {topicsSlot ? (
           <TabsContent value="topics" className="mt-4">
             {topicsSlot}
+          </TabsContent>
+        ) : null}
+        {unitsSlot ? (
+          <TabsContent value="units" className="mt-4">
+            {unitsSlot}
           </TabsContent>
         ) : null}
 

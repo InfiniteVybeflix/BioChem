@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, FolderTree, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { BookOpen, FolderTree, GraduationCap, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,13 +36,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/common/ui-bits";
 import { consoleUrl, useConsoleBase } from "@/lib/admin/console-context";
 import type { TopicListRow } from "@/app/console-api/topics/route";
+import type { UnitListRow } from "@/app/console-api/units/route";
 
 /**
  * Console CMS — content topics. Topics are the backbone of the whole
  * content model: the CSV / AI importers resolve every row's `topic`
  * column against this list, and students browse by topic inside each
- * exam zone. Create, edit, reorder and delete topics here; the exam
- * zones (CAT 1 / CAT 2 / Main) come from the course structure.
+ * exam zone or inside their course unit on /units. Create, edit,
+ * reorder and delete topics here; the exam zones (CAT 1 / CAT 2 / Main)
+ * come from the course structure, and each topic can additionally be
+ * filed under a course unit (BIO 205 …).
  */
 
 const ZONES: { value: TopicListRow["zone"]; label: string }[] = [
@@ -71,13 +74,28 @@ interface FormState {
   title: string;
   zone: TopicListRow["zone"];
   description: string;
+  unitId: string; // "none" → no unit
 }
 
-const EMPTY_FORM: FormState = { title: "", zone: "main", description: "" };
+const EMPTY_FORM: FormState = { title: "", zone: "main", description: "", unitId: "none" };
 
-export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
+/** Human label for a unit option: "BIO205 · Biochemistry of Plants (Short, Year 2)". */
+function unitLabel(unit: UnitListRow): string {
+  const school = unit.schoolShort || unit.schoolName;
+  const where = school ? `${school}, Year ${unit.year}` : `Year ${unit.year}`;
+  return `${unit.code} · ${unit.name} (${where})`;
+}
+
+export function TopicsManager({
+  initial,
+  units: initialUnits,
+}: {
+  initial: TopicListRow[];
+  units: UnitListRow[];
+}) {
   const base = useConsoleBase();
   const [topics, setTopics] = useState<TopicListRow[]>(initial);
+  const [units, setUnits] = useState<UnitListRow[]>(initialUnits);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
@@ -90,17 +108,36 @@ export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
   const openCreate = () => {
     setEditingId(null);
     setEditingSlug(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, unitId: units[0] ? units[0].id : "none" });
     setOrderIndex("");
     setDialogOpen(true);
+    void refreshUnits();
   };
 
   const openEdit = (topic: TopicListRow) => {
     setEditingId(topic.id);
     setEditingSlug(topic.slug);
-    setForm({ title: topic.title, zone: topic.zone, description: topic.description ?? "" });
+    setForm({
+      title: topic.title,
+      zone: topic.zone,
+      description: topic.description ?? "",
+      unitId: topic.unitId ?? "none",
+    });
     setOrderIndex(String(topic.orderIndex));
     setDialogOpen(true);
+    void refreshUnits();
+  };
+
+  /** Pick up units created in the Units tab since page load. */
+  const refreshUnits = async () => {
+    try {
+      const response = await fetch(consoleUrl(base, "api/units"));
+      if (!response.ok) return;
+      const data = (await response.json()) as { units: UnitListRow[] };
+      setUnits(data.units);
+    } catch {
+      // Keep the seed list — refresh is best-effort.
+    }
   };
 
   const saveTopic = async () => {
@@ -111,6 +148,7 @@ export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
     }
     setBusy(true);
     try {
+      const unitId = form.unitId !== "none" && form.unitId !== "" ? form.unitId : null;
       const payload = editingId
         ? {
             action: "update" as const,
@@ -118,6 +156,7 @@ export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
             title,
             zone: form.zone,
             description: form.description.trim() || null,
+            unitId,
             ...(orderIndex.trim() !== "" && !Number.isNaN(Number(orderIndex))
               ? { orderIndex: Number(orderIndex) }
               : {}),
@@ -127,6 +166,7 @@ export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
             title,
             zone: form.zone,
             description: form.description.trim() || undefined,
+            unitId,
             ...(orderIndex.trim() !== "" && !Number.isNaN(Number(orderIndex))
               ? { orderIndex: Number(orderIndex) }
               : {}),
@@ -223,6 +263,12 @@ export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
                   <Badge variant="secondary" className="text-[10px]">
                     {ZONE_LABELS[topic.zone]}
                   </Badge>
+                  {topic.unitCode ? (
+                    <Badge variant="outline" className="text-primary border-primary/40 text-[10px]">
+                      <GraduationCap className="mr-0.5 size-3" aria-hidden />
+                      {topic.unitCode}
+                    </Badge>
+                  ) : null}
                 </div>
                 <p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
                   {topic.slug}
@@ -325,6 +371,29 @@ export function TopicsManager({ initial }: { initial: TopicListRow[] }) {
                   placeholder="Auto"
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="topic-unit">Course unit (optional)</Label>
+              <Select
+                value={form.unitId}
+                onValueChange={(unitId) => setForm({ ...form, unitId })}
+              >
+                <SelectTrigger id="topic-unit" aria-label="Choose the course unit">
+                  <SelectValue placeholder="No unit" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No unit — zone only</SelectItem>
+                  {units.map((unit) => (
+                    <SelectItem key={unit.id} value={unit.id}>
+                      {unitLabel(unit)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-muted-foreground text-[11px]">
+                File the topic under a unit (e.g. BIO 205) so students of that school + year find
+                it on <span className="font-mono">/units</span>. Create units on the Units tab.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="topic-description">Description (optional)</Label>

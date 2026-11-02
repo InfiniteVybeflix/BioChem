@@ -41,9 +41,16 @@ const settingsPatchSchema = z.object({
   sources: z.array(sourceSchema).max(12).optional(),
 });
 
+/** Accept generous summaries from older clients/AI and clamp — Publish must never bounce with a length error. */
+const summaryField = z
+  .string()
+  .trim()
+  .max(2_000)
+  .transform((value) => value.slice(0, 400));
+
 const createSchema = z.object({
   title: z.string().trim().min(4, "Give the article a headline").max(300),
-  summary: z.string().trim().max(400).default(""),
+  summary: summaryField.default(""),
   content_md: z.string().trim().max(40_000).default(""),
   category: categorySchema.default("general"),
   source_url: z
@@ -69,7 +76,7 @@ const updateSchema = z.object({
   action: z.literal("update"),
   id: z.string().uuid(),
   title: z.string().trim().min(4).max(300).optional(),
-  summary: z.string().trim().max(400).optional(),
+  summary: summaryField.optional(),
   content_md: z.string().trim().max(40_000).optional(),
   category: categorySchema.optional(),
   source_url: z.string().trim().url().nullable().optional(),
@@ -328,6 +335,9 @@ async function draftWithRetries(
       const result = await gatewayChat("tutor", messages, {
         temperature: 0.3,
         maxTokens: 4_000,
+        // If the primary model is down or rejects the request, the
+        // draft still succeeds on another model instead of 400-ing.
+        fallbackModels: ["flash-v3.5", "swift-v1"],
       });
       const outcome = parseDraftArticle(result.content);
       const isLastAttempt = attempt === attempts - 1;
@@ -479,7 +489,38 @@ export async function POST(request: Request): Promise<Response> {
     }
     const result = await draftWithRetries(material, sourceUrl);
     if (!result.draft) {
-      return Response.json({ error: `AI draft failed: ${result.error}` }, { status: 502 });
+      // The AI is unreachable. For URL material we already have the
+      // page's own title/description/first paragraphs — pre-fill a
+      // usable draft from those so the operator can still review and
+      // publish instead of being blocked.
+      if (sourceUrl && (fallbackTitle || material.length > 60)) {
+        return Response.json({
+          ok: true,
+          draft: {
+            title: (fallbackTitle || material.slice(0, 80)).slice(0, 300),
+            summary: (fallbackSummary || material.slice(0, 300)).slice(0, 400),
+            content_md: material.replace(/\s+/g, " ").trim().slice(0, 1_200),
+            category: "general",
+            source_label: fallbackLabel.slice(0, 120),
+            source_url: sourceUrl,
+            image_url: fallbackImage,
+          },
+          ai_note:
+            `The AI was unreachable (${result.error}) — the form was filled from the page itself. ` +
+            "Edit it and publish, or press Draft with AI again in a moment.",
+          source_page: sourceUrl
+            ? { title: fallbackTitle, label: fallbackLabel, description: fallbackSummary }
+            : null,
+        });
+      }
+      return Response.json(
+        {
+          error:
+            `AI draft failed: ${result.error}. ` +
+            "Check the Aevibron gateway (model availability) — or paste the article text and write it manually.",
+        },
+        { status: 502 },
+      );
     }
     return Response.json({
       ok: true,

@@ -72,6 +72,7 @@ export type TopicsFile = z.infer<typeof topicsFileSchema>;
 export const csvQuestionRowSchema = z.object({
   topic: z.string().min(1),
   zone: z.enum(["cat1", "cat2", "main"]),
+  unit: z.string().max(80).optional(), // unit code (BIO205) or exact unit name — optional
   difficulty: z.enum(["easy", "medium", "hard"]).default("medium"),
   type: z.enum(["mcq", "short_answer", "long_answer", "structured"]).default("mcq"),
   stem: z.string().min(10),
@@ -91,6 +92,7 @@ export type CsvQuestionRow = z.infer<typeof csvQuestionRowSchema>;
 export const csvNoteRowSchema = z.object({
   title: z.string().min(3).max(200),
   topic: z.string().min(1),
+  unit: z.string().max(80).optional(), // unit code (BIO205) or exact unit name — optional
   summary: z.string().max(500).optional(),
   content: z.string().min(10),
   tags: z.string().optional(), // comma-separated

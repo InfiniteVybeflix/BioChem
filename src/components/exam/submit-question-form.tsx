@@ -22,7 +22,7 @@ import { useUser } from "@/hooks/use-user";
 import { questionSubmissionSchema } from "@/lib/validation";
 import { xpFor } from "@/lib/xp";
 import { toast } from "sonner";
-import type { FormTopic } from "@/components/exam/submit-note-form";
+import { TopicGroups, type FormTopic } from "@/components/exam/submit-note-form";
 import type { QuestionOption } from "@/types/domain";
 
 type QuestionInput = z.input<typeof questionSubmissionSchema>;
@@ -61,13 +61,20 @@ function fieldError(message: string | undefined): React.ReactNode {
  * questionSubmissionSchema and inserts a pending `submissions` row whose
  * payload carries the full question object.
  */
-export function SubmitQuestionForm({ topics }: { topics: FormTopic[] }) {
+export function SubmitQuestionForm({
+  topics,
+  initialTopicId,
+}: {
+  topics: FormTopic[];
+  /** Pre-selected topic (arriving from a unit page's "contribute here" CTA). */
+  initialTopicId?: string;
+}) {
   const { supabase, userId } = useUser();
   const [pending, setPending] = useState(false);
 
   const form = useForm<QuestionInput, unknown, QuestionOutput>({
     resolver: zodResolver(questionSubmissionSchema),
-    defaultValues: DEFAULT_VALUES,
+    defaultValues: { ...DEFAULT_VALUES, topicId: initialTopicId ?? "" },
   });
 
   const topicId = useWatch({ control: form.control, name: "topicId" });
@@ -149,11 +156,7 @@ export function SubmitQuestionForm({ topics }: { topics: FormTopic[] }) {
                   <SelectValue placeholder="Choose a topic" />
                 </SelectTrigger>
                 <SelectContent>
-                  {topics.map((topic) => (
-                    <SelectItem key={topic.id} value={topic.id}>
-                      {topic.title}
-                    </SelectItem>
-                  ))}
+                  <TopicGroups topics={topics} />
                 </SelectContent>
               </Select>
             )}
