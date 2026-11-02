@@ -7,15 +7,21 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
  * POST /api/content/bulk — staff bulk upload (publish_content).
- * Accepts multipart form-data with a `file` field (.zip ≤ 10MB). Inside the
- * archive every `*.md` becomes a published note (YAML frontmatter validated
- * with frontmatterSchema) and every `*.json` (except package.json) a batch of
- * published bank questions (questionFileSchema). Malformed files become error
- * entries in the report — they never fail the whole request. All inserts go
- * through the RLS-scoped server client.
+ * Two modes:
+ *  1. Zip mode — multipart `file` is a .zip ≤ 10MB. Every `*.md` becomes a
+ *     published note (YAML frontmatter validated with frontmatterSchema) and
+ *     every `*.json` (except package.json) a batch of published bank
+ *     questions (questionFileSchema).
+ *  2. Single-file mode — multipart `file` is one .md or .json file ≤ 2MB.
+ *     The sequential uploader stages the archive client-side, then posts the
+ *     files one at a time so huge batches never hit serverless time limits
+ *     and progress can be reported per file.
+ * Malformed files become error entries in the report — they never fail the
+ * whole request. All inserts go through the RLS-scoped server client.
  */
 
 const MAX_ZIP_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_ENTRIES = 200;
 
 export interface BulkReportItem {
@@ -33,24 +39,37 @@ export async function POST(req: Request): Promise<NextResponse> {
     const form = await req.formData().catch(() => null);
     const file = form?.get("file");
     if (!(file instanceof File)) {
-      return jsonError("Attach a .zip archive under the 'file' field", 400);
+      return jsonError("Attach a file under the 'file' field", 400);
     }
-    if (!file.name.toLowerCase().endsWith(".zip")) {
-      return jsonError("Only .zip archives are supported", 400);
+    const lowerName = file.name.toLowerCase();
+    const isZip = lowerName.endsWith(".zip");
+    const isSingle =
+      lowerName.endsWith(".md") ||
+      (lowerName.endsWith(".json") && !lowerName.endsWith("package.json"));
+    if (!isZip && !isSingle) {
+      return jsonError("Only .zip, .md and .json files are supported", 400);
     }
-    if (file.size > MAX_ZIP_BYTES) {
+    if (isZip && file.size > MAX_ZIP_BYTES) {
       return jsonError("That zip is larger than 10MB", 400);
+    }
+    if (!isZip && file.size > MAX_FILE_BYTES) {
+      return jsonError("That file is larger than 2MB", 400);
+    }
+
+    let entries: Record<string, Uint8Array>;
+    if (isZip) {
+      try {
+        entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+      } catch {
+        return jsonError("That file could not be unzipped — is it a valid zip archive?", 400);
+      }
+    } else {
+      // Single-file mode — exactly one staged file per request.
+      entries = { [file.name]: new Uint8Array(await file.arrayBuffer()) };
     }
 
     const rls = await getSupabaseServerClient();
     if (!rls) return jsonError("Service temporarily unavailable", 503);
-
-    let entries: Record<string, Uint8Array>;
-    try {
-      entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
-    } catch {
-      return jsonError("That file could not be unzipped — is it a valid zip archive?", 400);
-    }
 
     const names = Object.keys(entries).filter((name) => !name.endsWith("/"));
     const capped = names.slice(0, MAX_ENTRIES);

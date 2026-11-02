@@ -85,12 +85,19 @@ export default async function proxy(request: NextRequest) {
       // Console not configured on this deployment — behave like a 404.
       return notFound();
     }
-    const sub = pathname.slice(adminPrefix.length); // "" | "/…" | "/api/…"
+    const sub = pathname.slice(adminPrefix.length); // "" | "/…" | "/api/…" | "/console-api/…"
     let destination: string;
     if (sub === "" || sub === "/") {
       destination = "/console";
     } else if (sub.startsWith("/api/")) {
       destination = `/console-api${sub.slice(4)}`;
+    } else if (sub.startsWith("/console-api/")) {
+      // Legacy path form. Very long-lived tabs or an app shell that was
+      // loaded just before a redeploy can still run an older client
+      // bundle which calls {base}/console-api/* directly. Route those to
+      // the real API instead of letting them 404 — the route handler
+      // itself still enforces the admin session, so this is safe.
+      destination = sub;
     } else {
       destination = `/console${sub}`;
     }
