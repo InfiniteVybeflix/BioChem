@@ -12,25 +12,30 @@ import { toJson } from "@/types/domain";
  * the admin session and writes through the service-role client
  * instead.
  *
- *   GET  → { topics: [{ slug, title, zone }], units: [{ code, name }] }
+ *   GET  → { topics: [{ slug, title, zone }],
+ *            units: [{ id, code, name, school_id, year, semester }] }
  *   POST → { type: "questions" | "notes", rows, autoCreateTopics?,
- *            defaultZone?, schoolId? }
+ *            defaultZone?, schoolId?, defaultUnitId?, autoCreateUnits?,
+ *            unitYear?, answerVisibility? { mode, releaseAt? } }
  *
  * Rows are the papaparse output of a UTF-8 CSV with a header row
  * (same column contract as the lecturer importer). Per-row problems
  * are reported without failing the whole batch; a row only inserts
- * when its topic resolves (by slug or exact title) in the CMS.
+ * when its topic resolves (by slug or exact title) — or is
+ * auto-created.
  *
- * An optional `unit` column on a row files the row's topic under that
- * course unit (resolved by normalised code — "bio 205" → BIO205 — or
- * exact name). If the resolved topic has no unit yet it gains one;
- * with `autoCreateTopics` the created topic lands inside the unit.
+ * Units: a row's optional `unit` column files the row's topic under
+ * that course unit (resolved by id, normalised code — "bio 205" →
+ * BIO205 — or exact name). A chosen `defaultUnitId` destination
+ * overrides every row, the way a chosen topic does. With
+ * `autoCreateUnits` a recognised-but-missing unit (BIO205 …) is
+ * created on the fly under the chosen school, so an AI conversion
+ * that names its own unit still lands in the right place.
  *
- * With `autoCreateTopics` the unknown topics are created on the fly
- * (from the row's topic column), so an AI conversion can be imported
- * end-to-end without pre-building the topic tree. `defaultZone` is
- * the zone used for auto-created topics whose row doesn't name one,
- * and `schoolId` (optional) scopes the created topics to a school.
+ * Answer visibility (questions only): `answerVisibility.mode =
+ * "hidden"` publishes the questions with their answers withheld —
+ * students can attempt, but the key/explanation only open when the
+ * lecturer releases them or at `releaseAt`.
  */
 
 const MAX_ROWS = 500;
@@ -46,9 +51,20 @@ const bodySchema = z.object({
   autoCreateTopics: z.boolean().optional(),
   defaultZone: zoneSchema.optional(),
   schoolId: z.string().uuid().nullable().optional(),
+  /** Destination unit — every row files under this unit. */
+  defaultUnitId: z.string().uuid().nullable().optional(),
+  /** Create missing units (matched by code) instead of skipping them. */
+  autoCreateUnits: z.boolean().optional(),
+  /** Study year for units created on the fly (default 1). */
+  unitYear: z.coerce.number().int().min(1).max(8).optional(),
+  /** Questions publish with hidden answers when mode = "hidden". */
+  answerVisibility: z
+    .object({
+      mode: z.enum(["visible", "hidden"]),
+      releaseAt: z.string().optional(),
+    })
+    .optional(),
 });
-
-/** Console CSV note row — shared with the AI conversion route. */
 
 function parseTags(raw: string | undefined): string[] {
   return (raw ?? "")
@@ -56,6 +72,11 @@ function parseTags(raw: string | undefined): string[] {
     .map((tag) => tag.trim().toLowerCase())
     .filter((tag) => tag.length > 0)
     .slice(0, 8);
+}
+
+/** "bio 205" → "BIO205" — the normalised form unit codes are matched in. */
+function normaliseCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
 
 export async function GET(): Promise<Response> {
@@ -67,7 +88,10 @@ export async function GET(): Promise<Response> {
 
   const [topicsResult, unitsResult] = await Promise.all([
     admin.from("topics").select("slug, title, zone").order("title"),
-    admin.from("units").select("code, name").order("code"),
+    admin
+      .from("units")
+      .select("id, code, name, school_id, year, semester")
+      .order("code"),
   ]);
   if (topicsResult.error) {
     console.error("[console-api/import] topic list failed:", topicsResult.error.message);
@@ -90,7 +114,17 @@ export async function POST(request: Request): Promise<Response> {
       { status: 422 },
     );
   }
-  const { type, rows, autoCreateTopics, defaultZone, schoolId } = parsed.data;
+  const {
+    type,
+    rows,
+    autoCreateTopics,
+    defaultZone,
+    schoolId,
+    defaultUnitId,
+    autoCreateUnits,
+    unitYear,
+    answerVisibility,
+  } = parsed.data;
 
   const admin = getSupabaseAdminClient();
   if (!admin) return Response.json({ error: "Service unavailable" }, { status: 503 });
@@ -112,28 +146,80 @@ export async function POST(request: Request): Promise<Response> {
     (topicRows ?? []).map((row) => [row.id, (row as { unit_id?: string | null }).unit_id ?? null]),
   );
 
-  // Unit map: rows file content under a unit via its code (normalised:
-  // "bio 205" → BIO205) or its exact name. Missing units never block a
-  // row — the content still imports, the unit tag is simply skipped.
+  // Unit maps: rows file content under a unit via id, normalised code or
+  // exact name. Missing units never block a row — the content still
+  // imports; with autoCreateUnits the unit is created instead.
   const { data: unitRows, error: unitError } = await admin
     .from("units")
-    .select("id, code, name");
+    .select("id, code, name, school_id, year");
+  const unitById = new Map<string, string>();
   const unitByCode = new Map<string, string>();
   const unitByName = new Map<string, string>();
+  const unitYearById = new Map<string, number>();
   if (unitError) {
     console.warn(
       "[console-api/import] units unavailable — the unit column is ignored for this import (run the units SQL).",
     );
   } else {
     for (const unit of unitRows ?? []) {
-      unitByCode.set(unit.code.toUpperCase().replace(/\s+/g, ""), unit.id);
+      unitById.set(unit.id, unit.id);
+      unitByCode.set(normaliseCode(unit.code), unit.id);
       unitByName.set(unit.name.toLowerCase(), unit.id);
+      unitYearById.set(unit.id, unit.year);
     }
   }
   const resolveUnit = (reference: string | undefined): string | null => {
     const raw = reference?.trim();
     if (!raw) return null;
-    return unitByCode.get(raw.toUpperCase().replace(/\s+/g, "")) ?? unitByName.get(raw.toLowerCase()) ?? null;
+    return (
+      unitById.get(raw) ??
+      unitByCode.get(normaliseCode(raw)) ??
+      unitByName.get(raw.toLowerCase()) ??
+      null
+    );
+  };
+
+  // Destination unit: forced onto every row, like a chosen topic.
+  const forcedUnitId = defaultUnitId ? (unitById.get(defaultUnitId) ?? null) : null;
+
+  const notices: string[] = [];
+
+  /**
+   * Auto-create a missing unit from a row reference ("BIO205", "Bio 205",
+   * or an exact unit name). Needs a school — the destination school wins,
+   * otherwise the destination unit's school, otherwise the unit is skipped.
+   */
+  const createUnit = async (reference: string): Promise<string | null> => {
+    if (!autoCreateUnits) return null;
+    const raw = reference.trim();
+    if (raw.length < 2) return null;
+    const code = normaliseCode(raw);
+    if (!/^[A-Z]{2,6}\d{2,4}[A-Z]?$/i.test(code)) return null; // not a unit-code shape
+    const school = schoolId ?? null;
+    if (!school) {
+      if (!notices.includes("no-school-for-units")) {
+        notices.push("no-school-for-units");
+      }
+      return null;
+    }
+    // Another batch row may have created it already.
+    const existing = unitByCode.get(code);
+    if (existing) return existing;
+    const year = unitYear ?? 1;
+    const { data, error } = await admin
+      .from("units")
+      .insert({ school_id: school, code, name: raw, year })
+      .select("id")
+      .single();
+    if (error || !data) {
+      console.warn("[console-api/import] auto-create unit failed:", error?.message);
+      return null;
+    }
+    unitById.set(data.id, data.id);
+    unitByCode.set(code, data.id);
+    unitByName.set(raw.toLowerCase(), data.id);
+    unitYearById.set(data.id, year);
+    return data.id;
   };
 
   /**
@@ -210,12 +296,19 @@ export async function POST(request: Request): Promise<Response> {
   };
 
   /**
-   * Unit for the row: resolved from the row's `unit` column. When the
-   * resolved topic isn't in a unit yet, the topic gains this unit so
-   * the content shows up on /units for the right school + year.
+   * Unit for the row: the destination unit wins, then the row's own
+   * `unit` column (auto-created when recognised and missing). When the
+   * resolved topic isn't in that unit yet, the topic gains it so the
+   * content shows up on /units for the right school + year.
    */
   const unitFor = async (value: { unit?: string }, topicId: string): Promise<string | null> => {
-    const unitId = resolveUnit(value.unit);
+    let unitId = forcedUnitId;
+    if (!unitId) {
+      const reference = value.unit?.trim();
+      if (reference) {
+        unitId = resolveUnit(reference) ?? (await createUnit(reference));
+      }
+    }
     if (!unitId) return null;
     if ((topicUnit.get(topicId) ?? null) !== unitId) {
       const { error: assignError } = await admin
@@ -226,6 +319,17 @@ export async function POST(request: Request): Promise<Response> {
     }
     return unitId;
   };
+
+  // Question answer visibility — "hidden" publishes with the answer
+  // withheld (optionally until releaseAt).
+  const releaseAt = answerVisibility?.releaseAt
+    ? new Date(answerVisibility.releaseAt)
+    : null;
+  const answersHidden = type === "questions" && answerVisibility?.mode === "hidden";
+  const answersReleaseAt =
+    answersHidden && releaseAt && !Number.isNaN(releaseAt.getTime())
+      ? releaseAt.toISOString()
+      : null;
 
   let inserted = 0;
   const errors: { row: number; error: string }[] = [];
@@ -246,7 +350,14 @@ export async function POST(request: Request): Promise<Response> {
       const value = parsedRow.data;
       let topicId = resolveTopic(value.topic);
       if (!topicId && autoCreateTopics) {
-        topicId = await createTopic(value.topic, zoneFor(value), resolveUnit(value.unit));
+        const rowUnit = forcedUnitId ?? resolveUnit(value.unit);
+        if (!rowUnit && value.unit && autoCreateUnits) {
+          // Create the unit first so the new topic lands inside it.
+          const created = await createUnit(value.unit);
+          topicId = await createTopic(value.topic, zoneFor(value), created);
+        } else {
+          topicId = await createTopic(value.topic, zoneFor(value), rowUnit);
+        }
       }
       if (!topicId) {
         errors.push({
@@ -272,6 +383,16 @@ export async function POST(request: Request): Promise<Response> {
           .map((pair) => ({ key: pair.key, text: (pair.text ?? "").trim() }));
       }
 
+      // Answer visibility: an explicit answers_hidden column on the row wins,
+      // otherwise the operator's destination choice applies.
+      const rowHiddenPresent = "answers_hidden" in rows[index];
+      const rowRelease = value.answers_release_at ? new Date(value.answers_release_at) : null;
+      const hidden = rowHiddenPresent ? value.answers_hidden : answersHidden;
+      const releaseIso =
+        hidden && rowRelease && !Number.isNaN(rowRelease.getTime())
+          ? rowRelease.toISOString()
+          : answersReleaseAt;
+
       const { error } = await admin.from("questions").insert({
         topic_id: topicId,
         zone: zoneFor(value),
@@ -285,6 +406,7 @@ export async function POST(request: Request): Promise<Response> {
         source: "bank",
         status: "published",
         tags: parseTags(value.tags),
+        ...(hidden ? { answers_hidden: true, answers_release_at: releaseIso } : {}),
       });
       if (error) {
         console.error(`[console-api/import] question row ${rowNumber} failed:`, error.message);
@@ -304,7 +426,13 @@ export async function POST(request: Request): Promise<Response> {
       const value = parsedRow.data;
       let topicId = resolveTopic(value.topic);
       if (!topicId && autoCreateTopics) {
-        topicId = await createTopic(value.topic, zoneFor(value), resolveUnit(value.unit));
+        const rowUnit = forcedUnitId ?? resolveUnit(value.unit);
+        if (!rowUnit && value.unit && autoCreateUnits) {
+          const created = await createUnit(value.unit);
+          topicId = await createTopic(value.topic, zoneFor(value), created);
+        } else {
+          topicId = await createTopic(value.topic, zoneFor(value), rowUnit);
+        }
       }
       if (!topicId) {
         errors.push({
@@ -335,6 +463,14 @@ export async function POST(request: Request): Promise<Response> {
       }
       inserted += 1;
     }
+  }
+
+  if (notices.includes("no-school-for-units")) {
+    errors.push({
+      row: 0,
+      error:
+        "Some units couldn't be created — pick a destination school (or choose the destination unit) so new units know where they belong.",
+    });
   }
 
   return Response.json({ inserted, errors });

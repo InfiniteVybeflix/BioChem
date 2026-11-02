@@ -14,7 +14,7 @@ interface CsvImportResult {
 }
 
 const EXAMPLE_LINE =
-  "topic,zone,difficulty,type,stem,option_a,option_b,option_c,option_d,answer,explanation,marks,tags";
+  "topic,unit,zone,difficulty,type,stem,option_a,option_b,option_c,option_d,answer,explanation,marks,tags,answers_hidden";
 
 const MAX_ROWS = 500;
 
@@ -108,13 +108,16 @@ export function CsvImporter() {
           <Textarea
             value={csvText}
             onChange={(event) => setCsvText(event.target.value)}
-            placeholder={`${EXAMPLE_LINE}\nglycolysis,cat2,medium,mcq,"Which enzyme catalyses the committed step of glycolysis?",Hexokinase,Phosphofructokinase-1,,,B,"PFK-1 catalyses the first irreversible step",1,regulation`}
+            placeholder={`topic,zone,difficulty,type,stem,option_a,option_b,option_c,option_d,answer,explanation,marks,tags\nglycolysis,cat2,medium,mcq,"Which enzyme catalyses the committed step of glycolysis?",Hexokinase,Phosphofructokinase-1,,,B,"PFK-1 catalyses the first irreversible step",1,regulation`}
             className="min-h-44 font-mono text-xs"
             aria-label="Paste CSV rows"
           />
           <p className="text-muted-foreground text-xs">
-            Header row required — columns: <span className="font-mono">{EXAMPLE_LINE}</span>{" "}
-            (option_a–d and tags are optional; marks default to 1).
+            Header row required — columns: <span className="font-mono break-all">{EXAMPLE_LINE}</span>{" "}
+            (unit, option_a–d and tags are optional; marks default to 1; unit takes a unit code like
+            BIO205 or the exact unit name and files the topic under that unit; set{" "}
+            <span className="font-mono">answers_hidden</span> to “true” to withhold answers until
+            you release them from the Marking tab).
           </p>
           <Button
             type="button"

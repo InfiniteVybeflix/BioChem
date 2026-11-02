@@ -435,6 +435,11 @@ function QuestionForm({
 }) {
   const { supabase, userId } = useUser();
   const [pending, setPending] = useState(false);
+  // Answer visibility — the lecturer decides when students see the answer.
+  const [answerVisibility, setAnswerVisibility] = useState<"visible" | "hidden" | "scheduled">(
+    "visible",
+  );
+  const [releaseAt, setReleaseAt] = useState("");
 
   const form = useForm<QuestionInput, unknown, QuestionOutput>({
     resolver: zodResolver(questionFormSchema),
@@ -480,6 +485,10 @@ function QuestionForm({
         return;
       }
       setPending(true);
+      const scheduled =
+        answerVisibility === "scheduled" && releaseAt
+          ? new Date(releaseAt).toISOString()
+          : null;
       const { error } = await supabase.from("questions").insert({
         topic_id: values.topicId,
         zone: values.zone,
@@ -494,6 +503,8 @@ function QuestionForm({
         status: "published",
         created_by: userId,
         tags: values.tags,
+        answers_hidden: answerVisibility !== "visible",
+        answers_release_at: scheduled,
       });
       setPending(false);
 
@@ -502,7 +513,13 @@ function QuestionForm({
         return;
       }
 
-      toast.success("Question published to the bank");
+      toast.success(
+        answerVisibility === "visible"
+          ? "Question published to the bank"
+          : answerVisibility === "scheduled"
+            ? `Question published — answers open ${new Date(releaseAt).toLocaleString()}`
+            : "Question published — answers hidden until you release them (Marking tab)",
+      );
       if (addAnother) {
         form.setValue("stemMd", "");
         if (values.type_question === "mcq") form.setValue("options", EMPTY_MCQ_OPTIONS);
@@ -700,6 +717,54 @@ function QuestionForm({
             {...form.register("explanationMd")}
           />
           {fieldError(errors.explanationMd?.message)}
+        </div>
+      </div>
+
+      {/* ---- Answer visibility — lecturer decides when students see it ---- */}
+      <div className="glass-card space-y-3 p-4">
+        <div>
+          <Label htmlFor="publish-question-visibility">Answer visibility</Label>
+          <p className="text-muted-foreground mt-1 text-xs">
+            Hidden answers are withheld from the question bank — students can attempt first, and
+            the answer opens either automatically at the release moment or when you release it from
+            the Marking tab. Attempts are always recorded for marking.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Select
+              value={answerVisibility}
+              onValueChange={(value) =>
+                setAnswerVisibility(value as "visible" | "hidden" | "scheduled")
+              }
+            >
+              <SelectTrigger
+                id="publish-question-visibility"
+                className="w-full"
+                aria-label="Choose when students see the answer"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="visible">Visible immediately</SelectItem>
+                <SelectItem value="hidden">Hidden — I release it manually</SelectItem>
+                <SelectItem value="scheduled">Hidden until a date &amp; time</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {answerVisibility === "scheduled" ? (
+            <div className="space-y-2">
+              <Label htmlFor="publish-question-release" className="text-xs">
+                Release at
+              </Label>
+              <Input
+                id="publish-question-release"
+                type="datetime-local"
+                value={releaseAt}
+                onChange={(event) => setReleaseAt(event.target.value)}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 

@@ -12,6 +12,11 @@ import { toJson } from "@/types/domain";
  * 500). Each row is validated with csvQuestionRowSchema and inserted as a
  * published bank question; invalid rows are reported per-row without failing
  * the whole request. Inserts go through the RLS-scoped server client.
+ *
+ * The optional `unit` column files the row's topic under a course unit
+ * (resolved by normalised code — "bio 205" → BIO205 — or exact name).
+ * The optional `answers_hidden` / `answers_release_at` columns publish the
+ * question with its answer withheld (lecturers release from Marking).
  */
 
 const bodySchema = z.object({
@@ -20,6 +25,11 @@ const bodySchema = z.object({
     .min(1, "Nothing to import")
     .max(500, "Import at most 500 rows at a time"),
 });
+
+/** "bio 205" → "BIO205" — the normalised form unit codes are matched in. */
+function normaliseCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, "");
+}
 
 export async function POST(req: Request): Promise<NextResponse> {
   return handleRoute(async () => {
@@ -36,8 +46,25 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (!rls) return jsonError("Service temporarily unavailable", 503);
 
     // Topic slug → id map, built once.
-    const { data: topicRows } = await rls.from("topics").select("id, slug");
+    const { data: topicRows } = await rls.from("topics").select("id, slug, unit_id");
     const topicBySlug = new Map((topicRows ?? []).map((row) => [row.slug, row.id]));
+    const topicUnit = new Map(
+      (topicRows ?? []).map((row) => [row.id, (row as { unit_id?: string | null }).unit_id ?? null]),
+    );
+
+    // Unit maps — rows may name their unit by code or exact name.
+    const { data: unitRows } = await rls.from("units").select("id, code, name");
+    const unitByCode = new Map<string, string>();
+    const unitByName = new Map<string, string>();
+    for (const unit of unitRows ?? []) {
+      unitByCode.set(normaliseCode(unit.code), unit.id);
+      unitByName.set(unit.name.toLowerCase(), unit.id);
+    }
+    const resolveUnit = (reference: string | undefined): string | null => {
+      const raw = reference?.trim();
+      if (!raw) return null;
+      return unitByCode.get(normaliseCode(raw)) ?? unitByName.get(raw.toLowerCase()) ?? null;
+    };
 
     let inserted = 0;
     const errors: { row: number; error: string }[] = [];
@@ -60,6 +87,16 @@ export async function POST(req: Request): Promise<NextResponse> {
         continue;
       }
 
+      // File the row's topic under its unit when the row names one.
+      const unitId = resolveUnit(value.unit);
+      if (unitId && (topicUnit.get(topicId) ?? null) !== unitId) {
+        const { error: assignError } = await rls
+          .from("topics")
+          .update({ unit_id: unitId })
+          .eq("id", topicId);
+        if (!assignError) topicUnit.set(topicId, unitId);
+      }
+
       // MCQ options are built from option_a..option_d, empties filtered out.
       let options: QuestionOption[] = [];
       if (value.type === "mcq") {
@@ -80,6 +117,8 @@ export async function POST(req: Request): Promise<NextResponse> {
         .filter((tag) => tag.length > 0)
         .slice(0, 8);
 
+      const release = value.answers_release_at ? new Date(value.answers_release_at) : null;
+
       const { error } = await rls.from("questions").insert({
         topic_id: topicId,
         zone: value.zone,
@@ -94,6 +133,13 @@ export async function POST(req: Request): Promise<NextResponse> {
         status: "published",
         created_by: auth.ctx.userId,
         tags,
+        ...(value.answers_hidden
+          ? {
+              answers_hidden: true,
+              answers_release_at:
+                release && !Number.isNaN(release.getTime()) ? release.toISOString() : null,
+            }
+          : {}),
       });
 
       if (error) {

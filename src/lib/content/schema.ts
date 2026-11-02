@@ -84,6 +84,16 @@ export const csvQuestionRowSchema = z.object({
   explanation: z.string().default(""),
   marks: z.coerce.number().int().min(1).max(30).default(1),
   tags: z.string().optional(), // comma-separated
+  // Answer visibility — "true" publishes the question with its answer
+  // withheld until the lecturer releases it (or answers_release_at).
+  answers_hidden: z
+    .preprocess(
+      (value) =>
+        value === true || ["true", "yes", "1"].includes(String(value).trim().toLowerCase()),
+      z.boolean(),
+    )
+    .default(false),
+  answers_release_at: z.string().optional(), // ISO date or anything new Date() parses
 });
 
 export type CsvQuestionRow = z.infer<typeof csvQuestionRowSchema>;

@@ -1645,6 +1645,8 @@ export type Database = {
       questions: {
         Row: {
           answer_key: string
+          answers_hidden: boolean
+          answers_release_at: string | null
           created_at: string
           created_by: string | null
           difficulty: Database["public"]["Enums"]["difficulty"]
@@ -1664,6 +1666,8 @@ export type Database = {
         }
         Insert: {
           answer_key: string
+          answers_hidden?: boolean
+          answers_release_at?: string | null
           created_at?: string
           created_by?: string | null
           difficulty?: Database["public"]["Enums"]["difficulty"]
@@ -1683,6 +1687,8 @@ export type Database = {
         }
         Update: {
           answer_key?: string
+          answers_hidden?: boolean
+          answers_release_at?: string | null
           created_at?: string
           created_by?: string | null
           difficulty?: Database["public"]["Enums"]["difficulty"]
@@ -1713,6 +1719,64 @@ export type Database = {
             columns: ["topic_id"]
             isOneToOne: false
             referencedRelation: "topics"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      question_attempts: {
+        Row: {
+          auto_correct: boolean | null
+          created_at: string
+          id: string
+          marked_at: string | null
+          marked_by: string | null
+          marked_result: string | null
+          question_id: string
+          selected: string
+          user_id: string
+        }
+        Insert: {
+          auto_correct?: boolean | null
+          created_at?: string
+          id?: string
+          marked_at?: string | null
+          marked_by?: string | null
+          marked_result?: string | null
+          question_id: string
+          selected?: string
+          user_id: string
+        }
+        Update: {
+          auto_correct?: boolean | null
+          created_at?: string
+          id?: string
+          marked_at?: string | null
+          marked_by?: string | null
+          marked_result?: string | null
+          question_id?: string
+          selected?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_attempts_marked_by_fkey"
+            columns: ["marked_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_attempts_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "questions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_attempts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 };
 
 const QUESTION_SELECT =
-  "id, zone, difficulty, type, stem_md, options, answer_key, explanation_md, marks, source, " +
+  "id, zone, difficulty, type, stem_md, options, answers_hidden, answers_release_at, marks, source, " +
   "topic:topics!questions_topic_id_fkey (title, slug)";
 
 const PAGE_SIZE = 20;
@@ -26,8 +26,8 @@ interface RawQuestionRow {
   type: Database["public"]["Enums"]["question_type"];
   stem_md: string;
   options: QuestionOption[];
-  answer_key: string;
-  explanation_md: string;
+  answers_hidden: boolean;
+  answers_release_at: string | null;
   marks: number;
   source: string;
   topic: { title: string; slug: string } | null;
@@ -98,8 +98,8 @@ export default async function QuestionsPage({
     type: row.type,
     stemMd: row.stem_md,
     options: row.options,
-    answerKey: row.answer_key,
-    explanationMd: row.explanation_md,
+    answersHidden: row.answers_hidden,
+    answersReleaseAt: row.answers_release_at,
     marks: row.marks,
     source: row.source,
     topicTitle: row.topic?.title ?? null,

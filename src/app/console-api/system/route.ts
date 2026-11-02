@@ -310,6 +310,42 @@ create trigger set_updated_at_units
   for each row execute function public.set_updated_at();
 alter table public.topics add column if not exists unit_id uuid references public.units (id) on delete set null;
 create index if not exists topics_unit_idx on public.topics (unit_id);
+
+-- ---------- 10. Answer control & attempt marking (00024) ----------
+alter table public.questions add column if not exists answers_hidden boolean not null default false;
+alter table public.questions add column if not exists answers_release_at timestamptz;
+create index if not exists questions_release_idx
+  on public.questions (answers_hidden, answers_release_at);
+
+create table if not exists public.question_attempts (
+  id uuid primary key default gen_random_uuid(),
+  question_id uuid not null references public.questions (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  selected text not null default '',
+  auto_correct boolean,
+  marked_by uuid references public.profiles (id) on delete set null,
+  marked_result text check (marked_result in ('correct', 'incorrect')),
+  marked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists question_attempts_question_idx
+  on public.question_attempts (question_id, created_at desc);
+create index if not exists question_attempts_user_idx
+  on public.question_attempts (user_id, created_at desc);
+alter table public.question_attempts enable row level security;
+drop policy if exists "question_attempts_select_own_or_staff" on public.question_attempts;
+create policy "question_attempts_select_own_or_staff" on public.question_attempts
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_staff());
+drop policy if exists "question_attempts_insert_own" on public.question_attempts;
+create policy "question_attempts_insert_own" on public.question_attempts
+  for insert to authenticated
+  with check (user_id = auth.uid());
+drop policy if exists "question_attempts_update_staff" on public.question_attempts;
+create policy "question_attempts_update_staff" on public.question_attempts
+  for update to authenticated
+  using (public.is_staff())
+  with check (public.is_staff());
 `;
 
 export async function GET(): Promise<Response> {
@@ -357,11 +393,21 @@ export async function GET(): Promise<Response> {
     columnExists(probeOf(admin), "ads", "size", "ads.size (ad size control)"),
     columnExists(probeOf(admin), "topics", "school_id", "topics.school_id (school scoping)"),
     columnExists(probeOf(admin), "topics", "unit_id", "topics.unit_id (course-unit scoping)"),
+    columnExists(
+      probeOf(admin),
+      "questions",
+      "answers_hidden",
+      "questions.answers_hidden (lecturer answer control)",
+    ),
+  ]);
+
+  const extraTables = await Promise.all([
+    tableExists(probeOf(admin), "question_attempts"),
   ]);
 
   return Response.json({
     configured: true,
-    checks: [...tables, ...columns],
+    checks: [...tables, ...columns, ...extraTables],
     fixSql: FIX_SQL,
     aiConfigured: gatewayConfigured(),
   });

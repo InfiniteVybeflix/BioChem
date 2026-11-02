@@ -16,6 +16,7 @@ const LECTURER_NAV: PanelNavItem[] = [
   { href: "/lecturer/bulk", label: "Bulk upload" },
   { href: "/lecturer/mocks", label: "Custom mocks" },
   { href: "/lecturer/class", label: "Class analytics" },
+  { href: "/lecturer/marking", label: "Marking" },
   { href: "/lecturer/verify", label: "Verify answers" },
 ];
 
