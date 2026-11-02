@@ -270,7 +270,7 @@ export function ContentLibrary({
     if (statusFilter !== "all") params.set("status", statusFilter);
 
     try {
-      const response = await fetch(consoleUrl(base, `/console-api/content?${params.toString()}`), {
+      const response = await fetch(consoleUrl(base, `api/content?${params.toString()}`), {
         cache: "no-store",
       });
       if (!response.ok) {
@@ -325,7 +325,7 @@ export function ContentLibrary({
   const post = useCallback(
     async (payload: Record<string, unknown>, successMessage: string): Promise<boolean> => {
       try {
-        const response = await fetch(consoleUrl(base, "/console-api/content"), {
+        const response = await fetch(consoleUrl(base, "api/content"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -383,7 +383,7 @@ export function ContentLibrary({
   const loadDetail = async (row: ContentListRow) => {
     try {
       const response = await fetch(
-        consoleUrl(base, `/console-api/content?kind=${row.kind}&id=${row.id}`),
+        consoleUrl(base, `api/content?kind=${row.kind}&id=${row.id}`),
         { cache: "no-store" },
       );
       if (!response.ok) return;
