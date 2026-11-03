@@ -1,6 +1,6 @@
 "use client";
 
-import { format, parseISO } from "date-fns";
+import { format } from "date-fns";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 import { TrendingUp } from "lucide-react";
 
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/chart";
 import { EmptyState } from "@/components/common/ui-bits";
 import { zoneLabel } from "@/lib/constants";
+import { formatDateTimeSafe, parseIsoSafe } from "./date-utils";
 import type { AttemptListItem } from "./types";
 import type { AttemptMode, ExamZone } from "@/types/domain";
 
@@ -40,20 +41,24 @@ const MODE_LABELS: Record<AttemptMode, string> = {
 export function ScoreChart({ attempts }: { attempts: AttemptListItem[] }) {
   const points: ChartPoint[] = attempts
     .filter(
-      (attempt): attempt is AttemptListItem & { submittedAt: string } =>
+      (attempt) =>
         attempt.status === "submitted" &&
         typeof attempt.submittedAt === "string" &&
         attempt.maxScore > 0,
     )
-    .sort((a, b) => a.submittedAt.localeCompare(b.submittedAt))
-    .map((attempt) => ({
-      label: format(parseISO(attempt.submittedAt), "d MMM"),
+    // An invalid/empty timestamp must never reach `format` — date-fns
+    // throws "Invalid time value" and takes the whole mock hub down.
+    .map((attempt) => ({ attempt, date: parseIsoSafe(attempt.submittedAt) }))
+    .filter((entry): entry is { attempt: AttemptListItem; date: Date } => entry.date !== null)
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .map(({ attempt, date }) => ({
+      label: format(date, "d MMM"),
       score: Math.round((attempt.score / attempt.maxScore) * 100),
       zone: attempt.zone,
       mode: attempt.mode,
       rawScore: attempt.score,
       maxScore: attempt.maxScore,
-      submittedAt: attempt.submittedAt,
+      submittedAt: attempt.submittedAt ?? date.toISOString(),
     }));
 
   if (points.length === 0) {
@@ -94,7 +99,7 @@ export function ScoreChart({ attempts }: { attempts: AttemptListItem[] }) {
                         {zoneLabel(point.zone)} · {MODE_LABELS[point.mode]}
                       </span>
                       <span className="text-muted-foreground">
-                        {format(parseISO(point.submittedAt), "EEE d MMM yyyy, HH:mm")}
+                        {formatDateTimeSafe(point.submittedAt, "EEE d MMM yyyy, HH:mm", "—")}
                       </span>
                     </div>
                   );

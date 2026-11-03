@@ -18,6 +18,7 @@ export default async function ConsolePanelLayout({ children }: { children: React
   const base = adminBasePath();
   const nav: PanelNavItem[] = [
     { href: `${base}/dashboard`, label: "Overview" },
+    { href: `${base}/assistant`, label: "AI assistant" },
     { href: `${base}/users`, label: "Users" },
     { href: `${base}/moderation`, label: "Moderation" },
     { href: `${base}/schools`, label: "Schools" },

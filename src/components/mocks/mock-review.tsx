@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { format, parseISO } from "date-fns";
 import { CheckCircle2, Clock, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +8,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { gradeBand } from "@/lib/grading";
 import { zoneLabel } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { formatDateTimeSafe } from "./date-utils";
 import type { RunnerAttempt, RunnerQuestion } from "./types";
 import type { AttemptAnswer, AttemptMode } from "@/types/domain";
 
@@ -144,7 +144,7 @@ export function MockReview({
             {formatDuration(attempt.durationSeconds)}
           </span>
           {attempt.submittedAt ? (
-            <span>{format(parseISO(attempt.submittedAt), "d MMM yyyy, HH:mm")}</span>
+            <span>{formatDateTimeSafe(attempt.submittedAt, "d MMM yyyy, HH:mm", "Submitted")}</span>
           ) : null}
         </div>
       </section>
@@ -211,7 +211,7 @@ function ReviewCard({
 
   const yourAnswer =
     question.type === "mcq"
-      ? (question.options.find((option) => option.key === (answer?.selected ?? ""))?.text ??
+      ? ((question.options ?? []).find((option) => option.key === (answer?.selected ?? ""))?.text ??
         (answer?.selected ? answer.selected : "Not answered"))
       : answer?.text?.trim() && answer.text.trim().length > 0
         ? answer.text.trim()
@@ -219,7 +219,7 @@ function ReviewCard({
 
   const correctAnswer =
     question.type === "mcq"
-      ? (question.options.find((option) => option.key === question.answerKey)?.text ??
+      ? ((question.options ?? []).find((option) => option.key === question.answerKey)?.text ??
         question.answerKey ??
         "—")
       : (question.answerKey ?? "—");
@@ -229,7 +229,7 @@ function ReviewCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">Q{index}</Badge>
-          <Badge variant="outline">{TYPE_LABELS[question.type]}</Badge>
+          <Badge variant="outline">{TYPE_LABELS[question.type] ?? "Question"}</Badge>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className={statusBadgeClass(status)}>

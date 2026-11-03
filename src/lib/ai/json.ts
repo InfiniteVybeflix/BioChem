@@ -227,6 +227,16 @@ function digestListFrom(parsed: unknown): DigestArticlePayload[] {
 /** Find every balanced `{…}` block inside a broken JSON payload. */
 function salvageObjects(text: string): DigestArticlePayload[] {
   const values: DigestArticlePayload[] = [];
+  for (const entry of salvageRawObjects(text)) {
+    const result = digestArticleSchema.safeParse(entry);
+    if (result.success) values.push(result.data);
+  }
+  return values;
+}
+
+/** Find every balanced `{…}` block inside a broken JSON payload (untyped). */
+function salvageRawObjects(text: string): Record<string, unknown>[] {
+  const values: Record<string, unknown>[] = [];
   let cursor = 0;
   while (cursor < text.length) {
     const start = text.indexOf("{", cursor);
@@ -249,9 +259,8 @@ function salvageObjects(text: string): DigestArticlePayload[] {
         if (depth === 0) {
           try {
             const entry: unknown = JSON.parse(text.slice(start, index + 1));
-            if (entry && typeof entry === "object") {
-              const result = digestArticleSchema.safeParse(entry);
-              if (result.success) values.push(result.data);
+            if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+              values.push(entry as Record<string, unknown>);
             }
           } catch {
             // Skip the unparseable block.
@@ -264,4 +273,150 @@ function salvageObjects(text: string): DigestArticlePayload[] {
     if (depth !== 0) break; // last object never closed — nothing more to salvage
   }
   return values;
+}
+
+// ---------------------------------------------------------------------------
+// Universal model-JSON repair — used by every question/plan/card generator.
+// ---------------------------------------------------------------------------
+
+/** Trailing commas are the #1 model slip: `…}, ], "answerKey"…`. */
+function dropTrailingCommas(text: string): string {
+  return text.replace(/,\s*([[\]}])/g, "$1");
+}
+
+/** Smart quotes, bare NaN/Infinity/undefined — common model slips. */
+function normaliseTokens(text: string): string {
+  return text
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/\bNaN\b/g, "null")
+    .replace(/\b-?Infinity\b/g, "null")
+    .replace(/\bundefined\b/g, "null");
+}
+
+/** Best effort for fully single-quoted payloads (no double quotes at all). */
+function requoteSingleQuoted(text: string): string {
+  if (text.includes('"')) return text;
+  return text.replace(/'((?:[^'\\]|\\.)*)'/g, (_, body: string) => `"${body.replace(/"/g, '\\"')}"`);
+}
+
+/** Quote bare object keys: `{stem: …}` → `{"stem": …}`. */
+function quoteBareKeys(text: string): string {
+  return text.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
+}
+
+/**
+ * Cuts a truncated payload back to its last complete element and closes
+ * every open string/bracket, so a response that hit the token limit still
+ * parses (the caller retries for the full version; the repaired value is
+ * a last-resort fallback, not the happy path).
+ */
+function repairTruncatedJson(input: string): string | null {
+  let text = input.trimEnd();
+  if (text.length === 0) return null;
+  const cut = Math.max(
+    text.lastIndexOf(","),
+    text.lastIndexOf("{"),
+    text.lastIndexOf("["),
+    text.lastIndexOf(":"),
+  );
+  if (cut > 0) text = text.slice(0, cut).replace(/[,:\s]+$/, "");
+
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+  for (const char of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{" || char === "[") stack.push(char);
+    else if (char === "}" || char === "]") stack.pop();
+  }
+  if (inString) text += '"';
+  while (stack.length > 0) text += stack.pop() === "{" ? "}" : "]";
+  return text;
+}
+
+/**
+ * Parse ANY JSON payload out of a model response with layered repair:
+ * extract → parse → drop trailing commas → normalise tokens → quote keys →
+ * close truncation → salvage the complete objects from a broken array.
+ * Never throws; reports `truncated` so callers can retry for the full text.
+ */
+export function parseModelJson(raw: string): ParseOutcome<unknown> {
+  const extracted = extractBalanced(raw);
+  if (!extracted) return { error: "no JSON found" };
+  const { text, complete } = extracted;
+
+  const candidates: string[] = [
+    text,
+    dropTrailingCommas(text),
+    normaliseTokens(text),
+    normaliseTokens(dropTrailingCommas(text)),
+    quoteBareKeys(normaliseTokens(dropTrailingCommas(text))),
+    requoteSingleQuoted(normaliseTokens(dropTrailingCommas(text))),
+  ];
+  if (!complete) {
+    const repaired = repairTruncatedJson(text);
+    if (repaired) {
+      candidates.unshift(repaired);
+      candidates.push(
+        normaliseTokens(dropTrailingCommas(repaired)),
+        quoteBareKeys(normaliseTokens(dropTrailingCommas(repaired))),
+      );
+    }
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return { value: JSON.parse(candidate) as unknown, truncated: !complete };
+    } catch {
+      // Try the next repair layer.
+    }
+  }
+
+  // Last resort: salvage every complete object from a broken array.
+  const salvaged = salvageRawObjects(text);
+  if (salvaged.length > 0) return { value: salvaged, truncated: true };
+  return { error: "not valid JSON", truncated: !complete };
+}
+
+/**
+ * Pull the first JSON array out of a model reply — tolerates fences,
+ * prose, trailing commas, smart quotes and truncation. Accepts a bare
+ * array or an object wrapping one (first array-valued property).
+ * Throws only when there is genuinely nothing usable.
+ */
+export function extractModelArray(raw: string): unknown[] {
+  const outcome = parseModelJson(raw);
+  if (outcome.value !== undefined) {
+    const value = outcome.value;
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      for (const entry of Object.values(value as Record<string, unknown>)) {
+        if (Array.isArray(entry)) return entry;
+      }
+    }
+  }
+  throw new Error("Model response did not contain a usable JSON array");
+}
+
+/**
+ * Pull the first JSON object out of a model reply with the same repair
+ * layers. Throws only when there is genuinely nothing usable.
+ */
+export function extractModelObject(raw: string): Record<string, unknown> {
+  const outcome = parseModelJson(raw);
+  const value = outcome.value;
+  if (Array.isArray(value)) {
+    const first = value.find((entry) => entry && typeof entry === "object" && !Array.isArray(entry));
+    if (first) return first as Record<string, unknown>;
+  } else if (value && typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  throw new Error("Model response did not contain a usable JSON object");
 }

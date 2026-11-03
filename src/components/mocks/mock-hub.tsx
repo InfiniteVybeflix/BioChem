@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format, formatDistanceToNow, parseISO } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -33,6 +33,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { EmptyState } from "@/components/common/ui-bits";
 import { ScoreChart } from "./score-chart";
+import { formatDistanceSafe } from "./date-utils";
 import type { AttemptListItem } from "./types";
 import { useUser } from "@/hooks/use-user";
 import { ZONES, zoneLabel } from "@/lib/constants";
@@ -405,8 +406,7 @@ export function MockHub({
                       ) : null}
                     </div>
                     <p className="text-muted-foreground mt-1 text-xs">
-                      Started{" "}
-                      {formatDistanceToNow(parseISO(attempt.startedAt), { addSuffix: true })} ·{" "}
+                      Started {formatDistanceSafe(attempt.startedAt, "recently")} ·{" "}
                       {attempt.config.count ?? "—"} questions ·{" "}
                       {attempt.config.durationMinutes ?? 30} min
                     </p>

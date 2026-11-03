@@ -179,18 +179,34 @@ export async function generateDailyQuestions(
 
   const instructions = `Generate exactly ${settings.count} questions. Difficulty: ${settings.difficulty}. ${topicInstruction}`;
 
-  const result = await gatewayChat("daily_questions", [
-    { role: "system", content: DAILY_QUESTIONS_PROMPT },
-    {
-      role: "user",
-      content:
-        examples.length > 0
-          ? `${instructions}\n\nStyle examples:\n\n${questionExamples(examples)}`
-          : instructions,
-    },
-  ]);
+  // Parse with layered repair; retry once with a stricter instruction so a
+  // single malformed reply never surfaces as a raw JSON error to the student.
+  let raw: unknown[] | null = null;
+  for (let attempt = 0; attempt < 2 && raw === null; attempt += 1) {
+    const retryNote =
+      attempt === 0
+        ? ""
+        : "\n\nIMPORTANT: your previous reply was not usable. Reply with ONLY a valid JSON array — start with [ and end with ], no markdown fences, no commentary, no trailing commas. Every element must have stem, options (exactly 4, each {\"key\",\"text\"}), answerKey, explanation and marks.";
+    const result = await gatewayChat("daily_questions", [
+      { role: "system", content: DAILY_QUESTIONS_PROMPT },
+      {
+        role: "user",
+        content:
+          (examples.length > 0
+            ? `${instructions}\n\nStyle examples:\n\n${questionExamples(examples)}`
+            : instructions) + retryNote,
+      },
+    ]);
+    try {
+      raw = extractJsonArray(result.content);
+    } catch {
+      raw = null;
+    }
+  }
+  if (raw === null) {
+    throw new Error("The model returned an unreadable response — please try again");
+  }
 
-  const raw = extractJsonArray(result.content);
   const valid: DailyQuestionPayload[] = [];
   for (const element of raw) {
     const parsed = dailyQuestionSchema.safeParse(element);

@@ -2,7 +2,8 @@ import type { NextResponse } from "next/server";
 import { z } from "zod";
 import { jsonError, jsonOk } from "@/lib/api";
 import { requireAiAccess } from "@/lib/ai/guards";
-import { gatewayChat, gatewayConfigured } from "@/lib/ai/gateway";
+import { gatewayChat, gatewayConfigured, type GatewayMessage } from "@/lib/ai/gateway";
+import { extractModelArray, extractModelObject } from "@/lib/ai/json";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { questionOptions } from "@/types/domain";
 
@@ -80,17 +81,36 @@ Return ONLY a valid JSON object (no markdown fences):
 }
 Mark strictly: correct only when the selected key equals the answer key. Keep remarks encouraging but honest.`;
 
-function extractJson(raw: string): unknown {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  const start = candidate.search(/[[{]/);
-  const endBracket = candidate.lastIndexOf("]");
-  const endBrace = candidate.lastIndexOf("}");
-  const end = Math.max(endBracket, endBrace);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("The AI returned an unreadable response — please try again");
+const JSON_RETRY_NOTE =
+  '\n\nIMPORTANT: your previous reply was not valid JSON. Reply with ONLY the JSON — start with [ or { and end with ] or }, no markdown fences, no commentary, and no trailing commas anywhere.';
+
+/**
+ * Runs a generation task and parses the reply with layered JSON repair.
+ * A reply that fails to parse is retried once with a stricter instruction —
+ * the student should never see a raw "Unexpected token" error.
+ */
+async function chatJson(
+  task: Parameters<typeof gatewayChat>[0],
+  messages: GatewayMessage[],
+  expect: "array" | "object",
+): Promise<unknown> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const effective: GatewayMessage[] =
+      attempt === 0
+        ? messages
+        : [
+            ...messages.slice(0, -1),
+            { role: "user", content: `${messages[messages.length - 1].content}${JSON_RETRY_NOTE}` },
+          ];
+    const result = await gatewayChat(task, effective);
+    try {
+      return expect === "array" ? extractModelArray(result.content) : extractModelObject(result.content);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Unreadable AI response");
+    }
   }
-  return JSON.parse(candidate.slice(start, end + 1));
+  throw lastError ?? new Error("The AI returned an unreadable response — please try again");
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -132,7 +152,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         .map((note) => `### ${note.title}\n${note.content_md.slice(0, 8000)}`)
         .join("\n\n");
 
-      const result = await gatewayChat("tutor", [
+      const raw = (await chatJson("tutor", [
         { role: "system", content: GENERATE_PROMPT },
         {
           role: "user",
@@ -140,9 +160,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 ${grounding ? `Course notes to draw from:\n${grounding}\n` : ""}
 Generate ${count} ${difficulty === "all" ? "mixed-difficulty" : difficulty} questions as instructed.`,
         },
-      ]);
-
-      const raw = extractJson(result.content);
+      ], "array")) as unknown[];
       if (!Array.isArray(raw)) throw new Error("The AI returned no questions — please try again");
 
       const questions: PracticeQuestion[] = [];
@@ -169,24 +187,26 @@ Generate ${count} ${difficulty === "all" ? "mixed-difficulty" : difficulty} ques
 
     // ---- mark ----
     const { questions, answers } = parsed.data;
-    const result = await gatewayChat("tutor", [
-      { role: "system", content: MARK_PROMPT },
-      {
-        role: "user",
-        content: JSON.stringify({
-          questions: questions.map((question, index) => ({
-            index,
-            stem: question.stem,
-            options: question.options,
-            answerKey: question.answerKey,
-            marks: question.marks,
-            studentAnswer: answers[String(index)] ?? null,
-          })),
-        }),
-      },
-    ]);
-
-    const payload = extractJson(result.content) as {
+    const payload = (await chatJson(
+      "tutor",
+      [
+        { role: "system", content: MARK_PROMPT },
+        {
+          role: "user",
+          content: JSON.stringify({
+            questions: questions.map((question, index) => ({
+              index,
+              stem: question.stem,
+              options: question.options,
+              answerKey: question.answerKey,
+              marks: question.marks,
+              studentAnswer: answers[String(index)] ?? null,
+            })),
+          }),
+        },
+      ],
+      "object",
+    )) as {
       results?: {
         index?: number;
         correct?: boolean;

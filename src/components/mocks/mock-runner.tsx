@@ -74,6 +74,7 @@ function isAnswered(question: RunnerQuestion, answer: AttemptAnswer | undefined)
 }
 
 function formatCountdown(ms: number): string {
+  if (!Number.isFinite(ms)) return "--:--";
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -191,14 +192,17 @@ export function MockRunner({ attemptId }: { attemptId: string }) {
 
   const deadline = useMemo(() => {
     if (!data) return 0;
+    const started = new Date(data.attempt.startedAt).getTime();
+    // An unusable start time means no reliable deadline: never build a NaN
+    // countdown (and never auto-submit on load because of one).
+    if (!Number.isFinite(started)) return 0;
     return (
-      new Date(data.attempt.startedAt).getTime() +
-      Math.max(1, data.attempt.config.durationMinutes ?? 30) * 60_000
+      started + Math.max(1, data.attempt.config.durationMinutes ?? 30) * 60_000
     );
   }, [data]);
 
   const inProgress = data?.attempt.status === "in_progress";
-  const remainingMs = inProgress ? deadline - nowTick : 0;
+  const remainingMs = inProgress && deadline > 0 ? deadline - nowTick : 0;
 
   // ---------- Submit ----------
   const submitAttempt = useCallback(
@@ -235,13 +239,14 @@ export function MockRunner({ attemptId }: { attemptId: string }) {
     [attemptId, data, flushSave],
   );
 
-  // Auto-submit when the countdown reaches zero.
+  // Auto-submit when the countdown reaches zero. Requires a real deadline —
+  // an invalid timer must not submit the student's paper on page load.
   useEffect(() => {
     if (!data || data.attempt.status !== "in_progress") return;
-    if (remainingMs > 0 || autoSubmittedRef.current) return;
+    if (deadline <= 0 || remainingMs > 0 || autoSubmittedRef.current) return;
     autoSubmittedRef.current = true;
     void submitAttempt(true);
-  }, [remainingMs, data, submitAttempt]);
+  }, [remainingMs, deadline, data, submitAttempt]);
 
   // Warn before leaving with unsaved work.
   useEffect(() => {
@@ -403,7 +408,7 @@ export function MockRunner({ attemptId }: { attemptId: string }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">Q{current + 1}</Badge>
-              <Badge variant="outline">{TYPE_LABELS[question.type]}</Badge>
+              <Badge variant="outline">{TYPE_LABELS[question.type] ?? "Question"}</Badge>
               <Badge variant="outline">
                 {question.marks} {question.marks === 1 ? "mark" : "marks"}
               </Badge>
@@ -417,7 +422,7 @@ export function MockRunner({ attemptId }: { attemptId: string }) {
 
           {question.type === "mcq" ? (
             <div role="radiogroup" aria-label="Answer options" className="mt-5 grid gap-3">
-              {question.options.map((option) => {
+              {(question.options ?? []).map((option) => {
                 const selected = answer?.selected === option.key;
                 return (
                   <button

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { gatewayChat } from "@/lib/ai/gateway";
+import { extractModelObject } from "@/lib/ai/json";
 
 /**
  * The staff AI assistant — a working partner, not a chatbot.
@@ -73,15 +74,9 @@ Respond with ONLY a JSON object (no markdown fences, no commentary):
   "content_md": "the reworked markdown"
 }`;
 
-function extractJson(raw: string): unknown {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("The assistant returned an unreadable draft — please try again");
-  }
-  return JSON.parse(candidate.slice(start, end + 1));
+function extractJson(raw: string): Record<string, unknown> {
+  // Layered repair — fences, prose, trailing commas, smart quotes, truncation.
+  return extractModelObject(raw);
 }
 
 export async function runAssistant(request: AssistantRequest): Promise<AssistantResult> {

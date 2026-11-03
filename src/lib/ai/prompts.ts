@@ -5,6 +5,7 @@
 
 import type { Database } from "@/types/domain";
 import { questionOptions } from "@/types/domain";
+import { extractModelArray } from "@/lib/ai/json";
 
 type NoteRow = Database["public"]["Tables"]["notes"]["Row"];
 type QuestionRow = Database["public"]["Tables"]["questions"]["Row"];
@@ -87,18 +88,10 @@ export const MODERATION_PROMPT = `You are a moderation assistant for a universit
 Classify the message as "clean", "spam", "harassment", or "off_topic".
 Reply with ONLY the classification word.`;
 
-/** Extracts the first JSON array from a model response (tolerates fences/prose). */
+/** Extracts the first JSON array from a model response (tolerates fences/prose,
+ * trailing commas, smart quotes, bare keys and truncated output). */
 export function extractJsonArray(raw: string): unknown[] {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  const start = candidate.indexOf("[");
-  const end = candidate.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Model response did not contain a JSON array");
-  }
-  const parsed: unknown = JSON.parse(candidate.slice(start, end + 1));
-  if (!Array.isArray(parsed)) throw new Error("Model response was not a JSON array");
-  return parsed;
+  return extractModelArray(raw);
 }
 
 /** Selects a small random sample of published questions as few-shot style examples. */

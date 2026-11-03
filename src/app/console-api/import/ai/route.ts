@@ -4,6 +4,7 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireAdminApi } from "@/lib/admin/session";
 import { gatewayChat, gatewayConfigured } from "@/lib/ai/gateway";
 import { csvNoteRowSchema, csvQuestionRowSchema } from "@/lib/content/schema";
+import { extractModelObject } from "@/lib/ai/json";
 
 /**
  * Console import — AI conversion.
@@ -113,18 +114,10 @@ Each item in "items" is ONE coherent, self-contained note (split by heading, sub
 - Produce up to the requested number of items. Fewer is fine — never pad or repeat.
 - Output ONLY the JSON object.`;
 
-/** Pull the JSON object out of a model reply that may carry prose/fences. */
+/** Pull the JSON object out of a model reply that may carry prose/fences,
+ * trailing commas, smart quotes, bare keys or truncation. */
 function extractJsonObject(raw: string): unknown {
-  const cleaned = raw
-    .replace(/```(?:json)?\s*/gi, "")
-    .replace(/```/g, "")
-    .trim();
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("no JSON object found in the reply");
-  }
-  return JSON.parse(cleaned.slice(start, end + 1));
+  return extractModelObject(raw);
 }
 
 const detectedSchema = z
