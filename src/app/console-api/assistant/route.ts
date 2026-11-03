@@ -193,12 +193,31 @@ function parseModelReply(content: string): ModelReply {
   return { say: text.slice(0, 4_000), tool: null };
 }
 
+/**
+ * Read-tool execution with one forgiveness pass: when the model sends
+ * arguments the schema doesn't know (e.g. {"format": "json"} on
+ * platform_stats), strip everything that isn't a declared key and retry
+ * once before reporting bad arguments. Keeps the loop moving instead of
+ * burning a round on re-prompting.
+ */
 async function runReadTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const tool = ASSISTANT_TOOLS[name];
   if (!tool || tool.kind !== "read") {
     return { ok: false, data: null, summary: `Unknown read tool “${name}”` };
   }
-  const parsed = tool.schema.safeParse(args ?? {});
+  let parsed = tool.schema.safeParse(args ?? {});
+  if (!parsed.success) {
+    const shape = (tool.schema as { shape?: Record<string, unknown> }).shape;
+    if (shape) {
+      const known = new Set(Object.keys(shape));
+      const stripped: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(args ?? {})) {
+        if (known.has(key)) stripped[key] = value;
+      }
+      const retry = tool.schema.safeParse(stripped);
+      if (retry.success) parsed = retry;
+    }
+  }
   if (!parsed.success) {
     return {
       ok: false,

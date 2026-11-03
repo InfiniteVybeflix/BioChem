@@ -32,7 +32,7 @@ export default async function MocksPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: attempts } = await supabase
+  const { data: attempts, error: attemptsError } = await supabase
     .from("exam_attempts")
     .select(
       "id, zone, mode, status, score, max_score, config, started_at, submitted_at, duration_seconds, exams(title)",
@@ -67,6 +67,16 @@ export default async function MocksPage({
         description="Build random mocks from the question bank, sit past papers under timed conditions and track your scores."
       />
       <MockHub attempts={list} initialZone={initialZone} />
+      {attemptsError ? (
+        <p
+          role="alert"
+          className="bg-destructive/10 text-destructive rounded-xl px-4 py-3 text-sm"
+        >
+          Your attempt history could not be loaded just now
+          {attemptsError.message ? ` (${attemptsError.message})` : ""} — mocks still work, but
+          past scores may be missing. Try reloading the page.
+        </p>
+      ) : null}
     </div>
   );
 }

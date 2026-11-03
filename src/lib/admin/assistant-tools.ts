@@ -58,7 +58,10 @@ const platformStats: ToolDef = {
   kind: "read",
   description:
     "Overall platform snapshot: counts of schools, units, topics per zone, notes, questions, published/drafts, news articles, users and attempts.",
-  schema: z.object({}).strict(),
+  // Deliberately NOT .strict(): models love adding {"format": "json"}-style
+  // knobs to snapshot calls. Non-strict zod objects strip unknown keys, so
+  // the tool still runs instead of bouncing the call back to the model.
+  schema: z.object({}),
   async run() {
     const admin = getSupabaseAdminClient();
     if (!admin) return { ok: false, data: null, summary: "Database unavailable" };

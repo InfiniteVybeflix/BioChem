@@ -107,27 +107,6 @@ export default async function UnitPage({
     ? (topics.find((topic) => topic.slug === topicSlug) ?? null)
     : null;
 
-  // First published note per topic — clicking a topic opens its notes
-  // straight away instead of the two-step "Viewing → scroll → click" flow.
-  const firstNoteByTopic = new Map<string, { slug: string; count: number }>();
-  if (topics.length > 0) {
-    const { data: unitNoteRows } = await supabase
-      .from("notes")
-      .select("slug, topic_id")
-      .eq("status", "published")
-      .in(
-        "topic_id",
-        topics.map((topic) => topic.id),
-      )
-      .order("published_at", { ascending: false, nullsFirst: false })
-      .limit(300);
-    for (const row of unitNoteRows ?? []) {
-      const entry = firstNoteByTopic.get(row.topic_id);
-      if (entry) entry.count += 1;
-      else firstNoteByTopic.set(row.topic_id, { slug: row.slug, count: 1 });
-    }
-  }
-
   const auth = await getAuthContext();
   const isStaff = auth
     ? can(auth.profile.role, "publish_content", auth.profile.staff_abilities ?? [])
@@ -232,41 +211,26 @@ export default async function UnitPage({
             <nav aria-label={`Topics in ${unit.code}`} className="glass-card divide-border/60 divide-y">
               {topics.map((topic) => {
                 const isActive = topic.slug === selectedTopic?.slug;
-                const topicNote = firstNoteByTopic.get(topic.id);
                 return (
-                  <div key={topic.id} className="flex items-stretch justify-between gap-1">
-                    <Link
-                      href={
-                        topicNote
-                          ? `/notes/${topicNote.slug}`
-                          : `/units/${unit.id}?topic=${topic.slug}#topic-panel`
-                      }
-                      aria-current={isActive ? "page" : undefined}
-                      className={`focus-ring flex min-h-11 flex-1 items-center gap-2 p-4 text-sm font-semibold transition-colors ${
-                        isActive ? "text-primary" : "hover:text-primary"
-                      }`}
-                    >
-                      <span className="min-w-0 leading-snug">{topic.title}</span>
-                      {isActive ? (
-                        <span className="bg-primary/15 text-primary ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold">
-                          Viewing
-                        </span>
-                      ) : (
-                        <Badge variant="outline" className="ml-auto shrink-0 text-[10px] font-normal">
-                          {zoneLabel(topic.zone)}
-                        </Badge>
-                      )}
-                    </Link>
-                    {topicNote && topicNote.count > 1 ? (
-                      <Link
-                        href={`/units/${unit.id}?topic=${topic.slug}#topic-panel`}
-                        className="text-muted-foreground hover:text-primary focus-ring flex shrink-0 flex-col justify-center px-2 text-[11px] underline-offset-2 transition-colors hover:underline"
-                        aria-label={`All ${topicNote.count} notes for ${topic.title}`}
-                      >
-                        All {topicNote.count}
-                      </Link>
-                    ) : null}
-                  </div>
+                  <Link
+                    key={topic.id}
+                    href={`/topics/${topic.slug}`}
+                    aria-current={isActive ? "page" : undefined}
+                    className={`focus-ring flex min-h-11 items-center gap-2 p-4 text-sm font-semibold transition-colors ${
+                      isActive ? "text-primary" : "hover:text-primary"
+                    }`}
+                  >
+                    <span className="min-w-0 leading-snug">{topic.title}</span>
+                    {isActive ? (
+                      <span className="bg-primary/15 text-primary ml-auto shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold">
+                        Viewing
+                      </span>
+                    ) : (
+                      <Badge variant="outline" className="ml-auto shrink-0 text-[10px] font-normal">
+                        {zoneLabel(topic.zone)}
+                      </Badge>
+                    )}
+                  </Link>
                 );
               })}
             </nav>
@@ -344,9 +308,10 @@ export default async function UnitPage({
                 Pick a topic inside {unit.code}
               </h2>
               <p className="text-muted-foreground mt-2 max-w-md text-sm leading-6">
-                Choose a topic from the list to see its published notes
-                {isStaff ? ", then publish straight into this unit" : ""}. Everything here counts
-                towards {unit.code} for {schoolShort ? `${schoolShort} — ` : ""}Year {unit.year}.
+                Open any topic and it gets its own page — published notes and practice questions
+                side by side. Everything here counts towards {unit.code} for{" "}
+                {schoolShort ? `${schoolShort} — ` : ""}Year {unit.year}
+                {unit.semester ? `, Semester ${unit.semester}` : ""}.
               </p>
             </div>
           )}

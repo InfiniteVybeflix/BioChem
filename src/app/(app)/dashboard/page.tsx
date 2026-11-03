@@ -122,6 +122,8 @@ export default async function DashboardPage() {
         description={
           profile.schools && profile.year_of_study
             ? `${profile.schools.name} · Year ${profile.year_of_study}${
+                profile.semester ? `, Semester ${profile.semester}` : ""
+              }${
                 profile.schools.current_academic_year
                   ? ` · ${profile.schools.current_academic_year}`
                   : ""
