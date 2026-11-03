@@ -49,7 +49,7 @@ export default function manifest(): MetadataRoute.Manifest {
         icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }],
       },
       {
-        name: "AI Tutor",
+        name: "Nova (AI Tutor)",
         short_name: "Tutor",
         url: "/ai/tutor",
         icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }],

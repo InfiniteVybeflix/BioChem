@@ -112,7 +112,6 @@ export function CommandPalette() {
   const studyItems = useMemo(
     () => [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { label: "Course Units", href: "/units", icon: BookOpen },
       { label: "Exam Zones", href: "/zones", icon: Layers },
       { label: "Question Bank", href: "/questions", icon: ClipboardCheck },
       { label: "Mock Exams", href: "/mocks", icon: GraduationCap },
@@ -125,7 +124,7 @@ export function CommandPalette() {
 
   const aiItems = useMemo(
     () => [
-      { label: "AI Tutor", href: "/ai/tutor", icon: BrainCircuit },
+      { label: "Nova", href: "/ai/tutor", icon: BrainCircuit },
       { label: "Question of the Day", href: "/ai/daily", icon: Sparkles },
       { label: "Study Planner", href: "/planner", icon: Calendar },
     ],

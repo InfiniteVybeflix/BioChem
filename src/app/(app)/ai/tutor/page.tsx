@@ -4,16 +4,17 @@ import { TutorChat } from "@/components/ai/tutor-chat";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/types/domain";
 
-export const metadata = { title: "AI Tutor — BioChem" };
+export const metadata = { title: "Nova — BioChem" };
 
 type ConversationSummary = Pick<
   Database["public"]["Tables"]["ai_conversations"]["Row"],
-  "id" | "title" | "updated_at"
+  "id" | "title" | "updated_at" | "archived"
 >;
 
 /**
- * AI tutor page. The server passes the user's recent conversations (RLS-
- * enforced); streaming, note grounding and the composer live in the client
+ * Nova — the platform's AI study partner. The server passes the user's
+ * recent conversations (RLS-enforced); streaming, real platform facts,
+ * page actions, note grounding and the composer live in the client
  * component. When Supabase is not configured the setup state renders.
  */
 export default async function TutorPage({
@@ -27,8 +28,8 @@ export default async function TutorPage({
     return (
       <>
         <PageHeader
-          title="AI Tutor"
-          description="Ask anything biochemistry — answers grounded in your course notes."
+          title="Nova"
+          description="Your AI study partner — real platform data, grounded biochemistry help, and page actions."
         />
         <SetupNotice missing="app" />
       </>
@@ -37,7 +38,7 @@ export default async function TutorPage({
 
   const { data: conversations } = await supabase
     .from("ai_conversations")
-    .select("id, title, updated_at")
+    .select("id, title, updated_at, archived")
     .order("updated_at", { ascending: false })
     .limit(50);
 
@@ -58,8 +59,8 @@ export default async function TutorPage({
   return (
     <>
       <PageHeader
-        title="AI Tutor"
-        description="Ask anything biochemistry — answers grounded in your course notes, with LaTeX rendering and exam-answer modes."
+        title="Nova"
+        description="Your AI study partner: answers grounded in your course notes and the live platform database — with LaTeX rendering, exam-answer modes and real page actions."
       />
       <TutorChat initialConversations={initialConversations} preselectedNote={preselectedNote} />
     </>

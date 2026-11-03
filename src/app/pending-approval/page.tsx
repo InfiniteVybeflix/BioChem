@@ -14,6 +14,10 @@ export const metadata: Metadata = {
  * Staff holding area — the account exists and signs in fine, but
  * publishing capability stays locked (enforced at the database level)
  * until the platform team activates it from the operations console.
+ *
+ * ⚠️ Lives OUTSIDE the (app) group: the (app) layout redirects
+ * unapproved lecturers here, so keeping it inside would redirect to
+ * itself forever. It performs its own auth check instead.
  */
 export default async function PendingApprovalPage() {
   const auth = await getAuthContext();

@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  MessageSquarePlus,
+  Pencil,
+  Search,
+  Trash2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,12 +34,26 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-/** Sidebar / sheet conversation list for the AI tutor. */
+/**
+ * Sidebar / sheet conversation list for Nova.
+ * Real operations only: rename (PATCH), archive / unarchive (the
+ * `archived` column), delete (cascade), and client-side search across the
+ * loaded conversations.
+ */
 
 export interface ConversationSummary {
   id: string;
   title: string;
   updated_at: string;
+  archived?: boolean;
+}
+
+function relative(iso: string): string {
+  try {
+    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+  } catch {
+    return iso;
+  }
 }
 
 export function ConversationList({
@@ -41,6 +63,7 @@ export function ConversationList({
   onNew,
   onDelete,
   onRename,
+  onArchive,
   className,
 }: {
   conversations: ConversationSummary[];
@@ -48,42 +71,120 @@ export function ConversationList({
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => Promise<void>;
-  onRename?: (id: string, title: string) => Promise<void>;
+  onRename: (id: string, title: string) => Promise<void>;
+  onArchive: (id: string, archived: boolean) => Promise<void>;
   className?: string;
 }) {
-  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Rename dialog state.
   const [renameId, setRenameId] = useState<string | null>(null);
-  const [renameTitle, setRenameTitle] = useState("");
+  const [renameValue, setRenameValue] = useState("");
   const [renaming, setRenaming] = useState(false);
 
-  const relative = (iso: string): string => {
-    try {
-      return formatDistanceToNow(new Date(iso), { addSuffix: true });
-    } catch {
-      return iso;
-    }
-  };
+  const [showArchived, setShowArchived] = useState(false);
 
-  const openRename = (conversation: ConversationSummary) => {
-    setRenameId(conversation.id);
-    setRenameTitle(conversation.title || "");
-  };
+  const needle = query.trim().toLowerCase();
+  const { active, archived } = useMemo(() => {
+    const match = (conversation: ConversationSummary) =>
+      needle.length === 0 || conversation.title.toLowerCase().includes(needle);
+    return {
+      active: conversations.filter((conversation) => !conversation.archived && match(conversation)),
+      archived: conversations.filter((conversation) => conversation.archived && match(conversation)),
+    };
+  }, [conversations, needle]);
+
+  const targetTitle = (id: string): string =>
+    conversations.find((conversation) => conversation.id === id)?.title || "Untitled";
 
   const submitRename = async () => {
-    if (!renameId || !onRename) return;
-    const title = renameTitle.trim();
+    if (!renameId) return;
+    const title = renameValue.trim();
     if (title.length === 0) return;
     setRenaming(true);
     try {
       await onRename(renameId, title);
+      setRenameId(null);
     } finally {
       setRenaming(false);
-      setRenameId(null);
     }
   };
+
+  const row = (conversation: ConversationSummary, isArchived: boolean) => (
+    <li key={conversation.id}>
+      <div
+        className={cn(
+          "group flex items-center gap-1 rounded-lg border border-transparent transition-all",
+          conversation.id === activeId
+            ? "border-primary/40 bg-primary/10"
+            : "hover:border-border hover:bg-muted/40",
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => onSelect(conversation.id)}
+          className="focus-ring min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left"
+          aria-current={conversation.id === activeId ? "true" : undefined}
+        >
+          <span
+            className={cn(
+              "block truncate text-sm font-medium",
+              isArchived && "text-muted-foreground",
+            )}
+          >
+            {conversation.title || "Untitled conversation"}
+          </span>
+          <span className="text-muted-foreground block truncate text-xs">
+            {relative(conversation.updated_at)}
+          </span>
+        </button>
+        <div className="mr-1 flex shrink-0 items-center">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="focus-ring text-muted-foreground size-7 rounded-full opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={() => {
+              setRenameId(conversation.id);
+              setRenameValue(conversation.title || "");
+            }}
+            aria-label={`Rename conversation "${conversation.title || "Untitled"}"`}
+            title="Rename"
+          >
+            <Pencil className="size-3.5" aria-hidden />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="focus-ring text-muted-foreground size-7 rounded-full opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={() => void onArchive(conversation.id, !isArchived)}
+            aria-label={
+              isArchived
+                ? `Unarchive conversation "${conversation.title || "Untitled"}"`
+                : `Archive conversation "${conversation.title || "Untitled"}"`
+            }
+            title={isArchived ? "Unarchive" : "Archive"}
+          >
+            {isArchived ? (
+              <ArchiveRestore className="size-3.5" aria-hidden />
+            ) : (
+              <Archive className="size-3.5" aria-hidden />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="focus-ring text-muted-foreground hover:text-rose-600 size-7 rounded-full opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={() => setConfirmDeleteId(conversation.id)}
+            aria-label={`Delete conversation "${conversation.title || "Untitled"}"`}
+            title="Delete"
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+          </Button>
+        </div>
+      </div>
+    </li>
+  );
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-3", className)}>
@@ -92,60 +193,51 @@ export function ConversationList({
         New conversation
       </Button>
 
-      <nav aria-label="Tutor conversations" className="min-h-0 flex-1">
-        {conversations.length === 0 ? (
+      {conversations.length > 3 ? (
+        <div className="relative">
+          <Search
+            className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
+            aria-hidden
+          />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search conversations…"
+            className="focus-ring h-9 pl-8 text-sm"
+            aria-label="Search conversations"
+          />
+        </div>
+      ) : null}
+
+      <nav aria-label="Nova conversations" className="min-h-0 flex-1">
+        {active.length === 0 && archived.length === 0 ? (
           <p className="text-muted-foreground px-1 py-6 text-center text-sm">
-            No conversations yet — ask your first question below.
+            {needle.length > 0 ? "No conversations match your search." : "No conversations yet — ask your first question below."}
           </p>
         ) : (
-          <ul className="scrollbar-slim max-h-96 space-y-1 overflow-y-auto">
-            {conversations.map((conversation) => (
-              <li key={conversation.id}>
-                <div
-                  className={cn(
-                    "group flex items-center gap-1 rounded-lg border border-transparent transition-all",
-                    conversation.id === activeId
-                      ? "border-primary/40 bg-primary/10"
-                      : "hover:border-border hover:bg-muted/40",
-                  )}
+          <div className="scrollbar-slim max-h-[26rem] space-y-3 overflow-y-auto pr-1">
+            <ul className="space-y-1">
+              {active.map((conversation) => row(conversation, false))}
+            </ul>
+
+            {archived.length > 0 ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowArchived((open) => !open)}
+                  className="focus-ring text-muted-foreground hover:text-foreground flex w-full items-center gap-1 rounded px-1 py-1 text-xs font-medium uppercase tracking-wide"
+                  aria-expanded={showArchived}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSelect(conversation.id)}
-                    className="focus-ring min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left"
-                    aria-current={conversation.id === activeId ? "true" : undefined}
-                  >
-                    <span className="block truncate text-sm font-medium">
-                      {conversation.title || "Untitled conversation"}
-                    </span>
-                    <span className="text-muted-foreground block truncate text-xs">
-                      {relative(conversation.updated_at)}
-                    </span>
-                  </button>
-                  {onRename ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="focus-ring text-muted-foreground size-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                      onClick={() => openRename(conversation)}
-                      aria-label={`Rename conversation "${conversation.title || "Untitled"}"`}
-                    >
-                      <Pencil className="size-3.5" aria-hidden />
-                    </Button>
-                  ) : null}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="focus-ring text-muted-foreground mr-1 size-8 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                    onClick={() => setConfirmId(conversation.id)}
-                    aria-label={`Delete conversation "${conversation.title || "Untitled"}"`}
-                  >
-                    <Trash2 className="size-4" aria-hidden />
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                  <ChevronDown
+                    className={cn("size-3.5 transition-transform", !showArchived && "-rotate-90")}
+                    aria-hidden
+                  />
+                  Archived ({archived.length})
+                </button>
+                {showArchived ? <ul className="mt-1 space-y-1">{archived.map((conversation) => row(conversation, true))}</ul> : null}
+              </div>
+            ) : null}
+          </div>
         )}
       </nav>
 
@@ -159,47 +251,42 @@ export function ConversationList({
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Rename conversation</DialogTitle>
-            <DialogDescription>Give this chat a name you&apos;ll recognise.</DialogDescription>
+            <DialogDescription>Give this thread a name you will recognise later.</DialogDescription>
           </DialogHeader>
           <Input
-            value={renameTitle}
-            onChange={(event) => setRenameTitle(event.target.value)}
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void submitRename();
-              }
+              if (event.key === "Enter") void submitRename();
             }}
-            maxLength={80}
+            maxLength={120}
             autoFocus
-            aria-label="Conversation title"
+            aria-label="Conversation name"
           />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setRenameId(null)} disabled={renaming}>
+            <Button variant="outline" onClick={() => setRenameId(null)} disabled={renaming}>
               Cancel
             </Button>
-            <Button
-              onClick={() => void submitRename()}
-              disabled={renaming || renameTitle.trim().length === 0}
-            >
+            <Button onClick={() => void submitRename()} disabled={renaming || renameValue.trim().length === 0}>
               {renaming ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Delete confirm */}
       <AlertDialog
-        open={confirmId !== null}
+        open={confirmDeleteId !== null}
         onOpenChange={(open) => {
-          if (!open) setConfirmId(null);
+          if (!open) setConfirmDeleteId(null);
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
             <AlertDialogDescription>
-              The conversation and all its messages will be permanently removed. This cannot be
-              undone.
+              &quot;{confirmDeleteId ? targetTitle(confirmDeleteId) : ""}&quot; and all its messages
+              will be permanently removed. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -207,13 +294,13 @@ export function ConversationList({
             <AlertDialogAction
               disabled={deleting}
               onClick={async () => {
-                if (!confirmId) return;
+                if (!confirmDeleteId) return;
                 setDeleting(true);
                 try {
-                  await onDelete(confirmId);
+                  await onDelete(confirmDeleteId);
                 } finally {
                   setDeleting(false);
-                  setConfirmId(null);
+                  setConfirmDeleteId(null);
                 }
               }}
               className="bg-rose-600 text-white hover:bg-rose-700"

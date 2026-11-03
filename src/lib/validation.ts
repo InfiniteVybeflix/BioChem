@@ -141,6 +141,22 @@ export const tutorChatSchema = z.object({
   noteIds: z.array(z.string().uuid()).max(5).default([]),
 });
 
+/** Edit a previously sent user message; the thread is rewritten after it. */
+export const tutorEditSchema = z.object({
+  conversationId: z.string().uuid(),
+  messageId: z.string().uuid(),
+  content: z.string().min(1).max(4000),
+});
+
+/** Regenerate the latest assistant reply in a conversation. */
+export const tutorRegenerateSchema = z.object({
+  conversationId: z.string().uuid(),
+});
+
+export const tutorRenameSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+});
+
 export const pushSubscribeSchema = z.object({
   endpoint: z.string().url(),
   keys: z.object({
@@ -149,19 +165,11 @@ export const pushSubscribeSchema = z.object({
   }),
 });
 
-export const AD_PLACEMENTS = ["jobs", "events", "resources", "sidebar", "banner"] as const;
-
 export const adSchema = z.object({
   title: z.string().min(2).max(120),
   body: z.string().min(2).max(600),
-  /** Every slot this single ad appears in (1–5). */
-  placements: z
-    .array(z.enum(AD_PLACEMENTS))
-    .min(1, "Pick at least one placement")
-    .max(5, "An ad can target at most 5 placements"),
-  /** Rendering size of the ad card inside its slot. */
-  size: z.enum(["compact", "standard", "large"]).default("standard"),
-  targetUrl: z.string().url("Use a full URL, including https://"),
+  placement: z.enum(["jobs", "events", "resources", "sidebar", "banner"]),
+  targetUrl: z.string().url(),
   imageUrl: z.string().url().nullable().optional(),
   ctaLabel: z.string().min(2).max(40).default("Learn more"),
   endsAt: z.string().datetime().nullable().optional(),

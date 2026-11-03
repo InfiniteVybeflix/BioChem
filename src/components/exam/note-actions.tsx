@@ -124,7 +124,7 @@ export function NoteActions({
               key={mode.value}
               onSelect={() => {
                 if (!userId) {
-                  signInToast("Sign in to use the AI tutor");
+                  signInToast("Sign in to use Nova, the AI tutor");
                   return;
                 }
                 setExplainMode(mode.value);

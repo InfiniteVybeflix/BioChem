@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { ArrowRight, Check, GraduationCap, Loader2 } from "lucide-react";
-import { BrandLogo } from "@/components/layout/brand-logo";
+import { ArrowRight, Check, FlaskConical, GraduationCap, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/common/ui-bits";
@@ -21,9 +20,9 @@ export interface SchoolOption {
 }
 
 /**
- * Two-step onboarding: school → year & semester (staff pick just the
- * school). Saving stamps `year_synced_at`, so the academic-year rollover
- * only ever moves you forward from here.
+ * Two-step onboarding: school → year (staff pick just the school).
+ * Saving stamps `year_synced_at`, so the academic-year rollover only
+ * ever moves you forward from here.
  */
 export function OnboardingWizard({
   role,
@@ -38,7 +37,6 @@ export function OnboardingWizard({
   const supabase = getSupabaseBrowserClient();
   const [schoolId, setSchoolId] = useState<string | null>(null);
   const [year, setYear] = useState<number | null>(null);
-  const [semester, setSemester] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   const school = schools.find((entry) => entry.id === schoolId) ?? null;
@@ -46,19 +44,13 @@ export function OnboardingWizard({
   const years = school ? Array.from({ length: school.max_years }, (_, index) => index + 1) : [];
 
   const save = async () => {
-    if (!supabase || !schoolId || (isStudent && (!year || !semester))) return;
+    if (!supabase || !schoolId || (isStudent && !year)) return;
     setSaving(true);
 
     // Resolve the user first — updating with an empty id would silently
-    // match nothing and surface as a baffling "try again" error. One
-    // retry, because a single dropped request on a flaky mobile network
-    // must not cost the student their whole setup.
-    let userId: string | null | undefined;
-    for (let attempt = 0; attempt < 2 && !userId; attempt += 1) {
-      const { data: userData } = await supabase.auth.getUser();
-      userId = userData.user?.id;
-      if (!userId && attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
-    }
+    // match nothing and surface as a baffling "try again" error.
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
     if (!userId) {
       setSaving(false);
       toast.error("Your session expired — please sign in again");
@@ -71,7 +63,6 @@ export function OnboardingWizard({
       .update({
         school_id: schoolId,
         year_of_study: isStudent ? year : null,
-        semester: isStudent ? semester : null,
         year_synced_at: new Date().toISOString(),
         onboarding_done: true,
       })
@@ -83,15 +74,6 @@ export function OnboardingWizard({
       return;
     }
     toast.success(`Welcome aboard, ${initialName.split(" ")[0]}!`);
-    if (isStudent) {
-      // Arm the welcome tour — the dashboard picks this up and walks the
-      // new student around the app once.
-      try {
-        window.localStorage.setItem("biochem.tour.pending.v1", "1");
-      } catch {
-        // No storage — the tour is simply skipped, nothing else depends on it.
-      }
-    }
     router.push(isStudent ? "/dashboard" : "/lecturer");
     router.refresh();
   };
@@ -114,7 +96,9 @@ export function OnboardingWizard({
   return (
     <div className="glass-card p-6 sm:p-8">
       <div className="mb-6 text-center">
-        <BrandLogo className="mx-auto size-12" rounded="rounded-2xl" />
+        <span className="bg-primary/10 text-primary mx-auto flex size-12 items-center justify-center rounded-2xl">
+          <FlaskConical className="size-6" aria-hidden />
+        </span>
         <h1 className="font-display mt-3 text-xl font-semibold tracking-tight">
           {isStudent ? "Where do you study?" : "Which school are you at?"}
         </h1>
@@ -164,11 +148,11 @@ export function OnboardingWizard({
         </div>
       </fieldset>
 
-      {/* Step 2 — year & semester */}
+      {/* Step 2 — year */}
       {isStudent && school ? (
         <fieldset className="mt-6 space-y-2">
           <legend className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">
-            Step 2 · Year &amp; semester
+            Step 2 · Year of study
           </legend>
           <div className="flex flex-wrap gap-2">
             {years.map((value) => {
@@ -197,40 +181,12 @@ export function OnboardingWizard({
               automatically from there.
             </p>
           ) : null}
-
-          <div className="pt-2">
-            <p className="text-muted-foreground mb-2 text-xs font-medium">Semester</p>
-            <div className="flex flex-wrap gap-2">
-              {[1, 2, 3].map((value) => {
-                const selected = value === semester;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setSemester(value)}
-                    aria-pressed={selected}
-                    className={`min-w-24 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all ${
-                      selected
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "hover:border-primary/40 border-border bg-muted/20"
-                    }`}
-                  >
-                    Semester {value}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-muted-foreground/80 mt-2 text-xs">
-              We&apos;ll highlight the units running in your semester — you can still browse
-              everything.
-            </p>
-          </div>
         </fieldset>
       ) : null}
 
       <Button
         className="mt-8 w-full gap-2"
-        disabled={!schoolId || (isStudent && (!year || !semester)) || saving}
+        disabled={!schoolId || (isStudent && !year) || saving}
         onClick={() => void save()}
       >
         {saving ? (

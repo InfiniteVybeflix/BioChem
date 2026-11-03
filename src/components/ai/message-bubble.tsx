@@ -1,17 +1,36 @@
 "use client";
 
-import { Bot, BookOpen, ExternalLink, User } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Bot,
+  BookOpen,
+  Check,
+  Copy,
+  ExternalLink,
+  Navigation,
+  Pencil,
+  RefreshCw,
+  User,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/markdown/markdown";
 import { cn } from "@/lib/utils";
+import { parseStoredActions, stripStoredActions } from "@/lib/ai/nova/actions";
+import type { NovaAction } from "@/lib/ai/nova/facts";
 
 /**
- * A single tutor-chat bubble: user messages right-aligned on primary,
- * assistant replies left in glass with markdown + LaTeX rendering.
+ * A single Nova chat bubble: user messages right-aligned on primary,
+ * Nova's replies left in glass with markdown + LaTeX rendering.
  *
- * Assistant replies may carry a `<!--BCMEDIA:{…}-->` footer (persisted)
- * or an attached live `media` payload with real images from Wikimedia
- * Commons (attributed) and reference links — both render under the
- * answer, never inside it.
+ * Assistant replies may carry persisted footers:
+ *  - `<!--BCACTIONS:[…]-->` — validated real page actions, rendered as
+ *    clickable chips (and auto-executed live by the chat container);
+ *  - `<!--BCMEDIA:{…}-->` — resolved Wikimedia images + reference links.
+ * User messages get copy + edit; Nova's last reply gets regenerate.
  */
 
 export interface TutorMediaImage {
@@ -43,20 +62,27 @@ export interface ChatMessage {
 }
 
 const MEDIA_FOOTER_RE = /\n*<!--BCMEDIA:(.*?)-->\s*$/s;
-const LIVE_MARKER_RE = /\[\[(?:MEDIA|LINKS):[^\]]*\]?/g;
+const LIVE_MARKER_RE = /\[\[(?:MEDIA|LINKS|ACTION):[^\]]*\]?/g;
 
-/** Splits a stored reply into its text and persisted media footer. */
-export function parseStoredMedia(content: string): { text: string; media: TutorMedia | null } {
-  const match = content.match(MEDIA_FOOTER_RE);
-  if (!match) return { text: content, media: null };
+/** Splits a stored reply into its text, persisted media and actions. */
+export function parseStoredReply(content: string): {
+  text: string;
+  media: TutorMedia | null;
+  actions: NovaAction[];
+} {
+  const actions = parseStoredActions(content);
+  const withoutActions = stripStoredActions(content);
+  const match = withoutActions.match(MEDIA_FOOTER_RE);
+  if (!match) return { text: withoutActions, media: null, actions };
   try {
     const parsed = JSON.parse(match[1].replace(/-- >/g, "-->")) as TutorMedia;
     return {
-      text: content.replace(MEDIA_FOOTER_RE, ""),
+      text: withoutActions.replace(MEDIA_FOOTER_RE, ""),
       media: parsed && (parsed.images?.length || parsed.links?.length) ? parsed : null,
+      actions,
     };
   } catch {
-    return { text: content, media: null };
+    return { text: withoutActions.replace(MEDIA_FOOTER_RE, ""), media: null, actions };
   }
 }
 
@@ -122,14 +148,126 @@ function MediaBlock({ media }: { media: TutorMedia }) {
   );
 }
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+/** Real, clickable chips for Nova's executed page actions. */
+export function ActionChips({ actions }: { actions: NovaAction[] }) {
+  if (actions.length === 0) return null;
+  return (
+    <div className="mt-2.5 flex flex-wrap gap-1.5" aria-label="Pages Nova opened">
+      {actions.map((action) => (
+        <a
+          key={`${action.kind}-${action.path}`}
+          href={action.path}
+          className="focus-ring border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
+          {...(action.kind === "open_tab"
+            ? { target: "_blank", rel: "noopener noreferrer" }
+            : {})}
+        >
+          {action.kind === "open_tab" ? (
+            <ExternalLink className="size-3" aria-hidden />
+          ) : (
+            <Navigation className="size-3" aria-hidden />
+          )}
+          {action.kind === "open_tab" ? "Opened in new tab" : "Opened"}: {action.title}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  icon,
+  tone = "neutral",
+}: {
+  label: string;
+  onClick: () => void;
+  icon: ReactNode;
+  tone?: "neutral" | "primary";
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className={cn(
+        "focus-ring text-muted-foreground hover:text-foreground size-7 rounded-full",
+        tone === "primary" && "text-primary hover:text-primary",
+      )}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      {icon}
+    </Button>
+  );
+}
+
+export interface MessageBubbleProps {
+  message: ChatMessage;
+  /** Edit + regenerate controls (only offered where meaningful). */
+  onEdit?: (messageId: string, content: string) => void;
+  onRegenerate?: () => void;
+  showEdit?: boolean;
+  showRegenerate?: boolean;
+  busy?: boolean;
+}
+
+export function MessageBubble({
+  message,
+  onEdit,
+  onRegenerate,
+  showEdit = false,
+  showRegenerate = false,
+  busy = false,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
-  const stored = isUser ? null : parseStoredMedia(message.content);
-  const text = stored ? stored.text : message.content;
-  const media = message.media ?? stored?.media ?? null;
+  const parsed = isUser ? null : parseStoredReply(message.content);
+  const text = parsed ? parsed.text : message.content;
+  const media = message.media ?? parsed?.media ?? null;
+  const actions = parsed?.actions ?? [];
+
+  const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(message.content);
+  const editRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (editing) {
+      editRef.current?.focus();
+      editRef.current?.setSelectionRange(editValue.length, editValue.length);
+    }
+  }, [editing, editValue.length]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success("Copied to clipboard");
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Could not copy — your browser blocked clipboard access");
+    }
+  };
+
+  const saveEdit = () => {
+    const trimmed = editValue.trim();
+    if (trimmed.length === 0) {
+      toast.error("The message cannot be empty");
+      return;
+    }
+    if (trimmed === message.content) {
+      setEditing(false);
+      return;
+    }
+    if (onEdit) {
+      setEditing(false);
+      onEdit(message.id, trimmed);
+    }
+  };
 
   return (
-    <div className={cn("flex w-full gap-2.5", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("group flex w-full gap-2.5", isUser ? "justify-end" : "justify-start")}>
       {!isUser ? (
         <span
           className="bg-primary/10 text-primary mt-1 flex size-8 shrink-0 items-center justify-center rounded-full"
@@ -138,21 +276,98 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           <Bot className="size-4" />
         </span>
       ) : null}
-      <div
-        className={cn(
-          "focus-ring max-w-[85%] rounded-2xl px-4 py-3 sm:max-w-[75%]",
-          isUser ? "bg-primary text-primary-foreground rounded-br-md" : "glass-card rounded-bl-md",
-        )}
-      >
-        <span className="sr-only">{isUser ? "You said:" : "AI tutor replied:"}</span>
-        {isUser ? (
-          <p className="text-sm leading-6 break-words whitespace-pre-wrap">{message.content}</p>
-        ) : (
-          <>
-            <Markdown>{text}</Markdown>
-            {media ? <MediaBlock media={media} /> : null}
-          </>
-        )}
+      <div className="flex max-w-[85%] flex-col sm:max-w-[75%]">
+        <div
+          className={cn(
+            "focus-ring rounded-2xl px-4 py-3",
+            isUser ? "bg-primary text-primary-foreground rounded-br-md" : "glass-card rounded-bl-md",
+          )}
+        >
+          <span className="sr-only">{isUser ? "You said:" : "Nova replied:"}</span>
+          {isUser ? (
+            editing ? (
+              <div className="space-y-2">
+                <Textarea
+                  ref={editRef}
+                  value={editValue}
+                  onChange={(event) => setEditValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      saveEdit();
+                    }
+                    if (event.key === "Escape") setEditing(false);
+                  }}
+                  rows={3}
+                  className="bg-background text-foreground focus-ring min-h-20 text-sm"
+                  aria-label="Edit your message"
+                />
+                <div className="flex justify-end gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="focus-ring h-8"
+                    onClick={() => {
+                      setEditValue(message.content);
+                      setEditing(false);
+                    }}
+                  >
+                    <X className="size-3.5" aria-hidden /> Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="focus-ring h-8"
+                    onClick={saveEdit}
+                    disabled={busy}
+                  >
+                    Save &amp; resend
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm leading-6 break-words whitespace-pre-wrap">{message.content}</p>
+            )
+          ) : (
+            <>
+              <Markdown>{text}</Markdown>
+              {media ? <MediaBlock media={media} /> : null}
+            </>
+          )}
+        </div>
+
+        {actions.length > 0 ? <ActionChips actions={actions} /> : null}
+
+        {/* Hover toolbar */}
+        {!editing ? (
+          <div
+            className={cn(
+              "mt-0.5 flex items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100",
+              isUser ? "justify-end" : "justify-start",
+            )}
+          >
+            <IconButton
+              label={copied ? "Copied" : "Copy message"}
+              onClick={() => void copy()}
+              icon={copied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+            />
+            {isUser && showEdit && onEdit ? (
+              <IconButton
+                label="Edit and resend"
+                onClick={() => setEditing(true)}
+                icon={<Pencil className="size-3.5" aria-hidden />}
+              />
+            ) : null}
+            {!isUser && showRegenerate && onRegenerate ? (
+              <IconButton
+                label="Regenerate answer"
+                onClick={onRegenerate}
+                icon={<RefreshCw className="size-3.5" aria-hidden />}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {isUser ? (
         <span
@@ -168,9 +383,8 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
 
 /**
  * The live streaming bubble: deltas appended as they arrive, with a
- * pulsing cursor while the tutor is still typing. Media/link markers
- * the model emits near the end are hidden until they resolve into
- * real resources.
+ * pulsing cursor while Nova is still typing. Media/action/link markers
+ * are hidden until they resolve into real resources.
  */
 export function StreamingBubble({ text }: { text: string }) {
   const visible = text.replace(LIVE_MARKER_RE, "");
@@ -183,7 +397,7 @@ export function StreamingBubble({ text }: { text: string }) {
         <Bot className="size-4" />
       </span>
       <div className="glass-card focus-ring max-w-[85%] rounded-2xl rounded-bl-md px-4 py-3 sm:max-w-[75%]">
-        <span className="sr-only">AI tutor is replying…</span>
+        <span className="sr-only">Nova is replying…</span>
         {visible.trim().length > 0 ? (
           <div className="break-words">
             <Markdown>{visible}</Markdown>

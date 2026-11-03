@@ -1,11 +1,14 @@
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { gatewayChat, type GatewayMessage } from "@/lib/ai/gateway";
 import { TUTOR_SYSTEM_PROMPT, buildTutorContext } from "@/lib/ai/prompts";
+import { collectFacts } from "@/lib/ai/nova/facts";
+import { actionsFooter, buildDirectoryContext, parseActions } from "@/lib/ai/nova/actions";
+import { directoryForRole } from "@/lib/ai/nova/directory";
 import { notifyUsers } from "@/lib/push";
 import type { Database } from "@/types/domain";
 
 /**
- * AI tutor reply generation.
+ * AI tutor (Nova) reply generation.
  *
  * The chat route streams the reply directly; when the gateway is unreachable
  * the request is queued and this module regenerates the answer later
@@ -29,18 +32,23 @@ export interface TutorNote {
 
 /**
  * Builds the gateway message list: tutor system prompt, optional grounding
- * context from the caller's notes, the recent conversation history, and the
- * new user message.
+ * context from the caller's notes, real platform data blocks, the recent
+ * conversation history, and the new user message.
  */
 export function buildTutorMessages(
   history: TutorHistoryMessage[],
   message: string,
   notes: Pick<NoteRow, "title" | "content_md">[],
+  factBlocks: string[] = [],
 ): GatewayMessage[] {
   const messages: GatewayMessage[] = [{ role: "system", content: TUTOR_SYSTEM_PROMPT }];
 
   const context = buildTutorContext(notes);
   if (context) messages.push({ role: "system", content: context });
+
+  for (const block of factBlocks) {
+    messages.push({ role: "system", content: block });
+  }
 
   for (const entry of history) {
     if (entry.role !== "user" && entry.role !== "assistant") continue;
@@ -85,8 +93,9 @@ async function loadGroundingNotes(noteIds: string[]): Promise<TutorNote[]> {
 
 /**
  * Regenerates a tutor answer for a queued chat turn: ensures the user's
- * message exists, calls the gateway (non-streaming), persists the assistant
- * message, and notifies the user that the tutor replied.
+ * message exists, collects real platform facts, calls the gateway
+ * (non-streaming), persists the assistant message (with validated actions),
+ * and notifies the user that Nova replied.
  */
 export async function generateTutorReply(
   userId: string,
@@ -124,17 +133,42 @@ export async function generateTutorReply(
       : history;
 
   const notes = await loadGroundingNotes(noteIds);
-  const messages = buildTutorMessages(trimmed, message, notes);
+
+  // Real platform data + role-scoped directory for action markers.
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle();
+  const role = profile?.role ?? "student";
+  const pages = directoryForRole(role);
+  const facts = await collectFacts(admin, {
+    message,
+    role,
+    userId,
+    groundedTitles: notes.map((note) => note.title),
+  });
+
+  const messages = buildTutorMessages(trimmed, message, notes, [
+    buildDirectoryContext(pages),
+    ...facts.blocks,
+  ]);
 
   const result = await gatewayChat("tutor", messages);
   if (result.content.trim().length === 0) {
     throw new Error("The tutor returned an empty reply");
   }
 
+  const parsed = parseActions(result.content, pages);
+  // The queued path cannot resolve [[MEDIA:]]/[[LINKS:]] live, so strip the
+  // raw markers — they would render as junk text otherwise.
+  const cleanText = parsed.text.replace(/\[\[(?:MEDIA|LINKS|ACTION):[^\]]*\]\]/g, "").trimEnd();
+  const savedContent = cleanText + actionsFooter(parsed.actions);
+
   const { error } = await admin.from("ai_messages").insert({
     conversation_id: conversationId,
     role: "assistant",
-    content: result.content,
+    content: savedContent,
     grounding_note_ids: noteIds,
     model: result.model,
   });
@@ -146,12 +180,12 @@ export async function generateTutorReply(
     .eq("id", conversationId);
 
   await notifyUsers([userId], "system", {
-    title: "AI tutor replied",
+    title: "Nova replied",
     body: message.slice(0, 80),
     link: "/ai/tutor",
   });
 
-  return { reply: result.content, model: result.model };
+  return { reply: parsed.text, model: result.model };
 }
 
 /** Row shape helper for consumers that list tutor threads. */

@@ -5,28 +5,34 @@
 
 import type { Database } from "@/types/domain";
 import { questionOptions } from "@/types/domain";
-import { extractModelArray } from "@/lib/ai/json";
 
 type NoteRow = Database["public"]["Tables"]["notes"]["Row"];
 type QuestionRow = Database["public"]["Tables"]["questions"]["Row"];
 
-export const TUTOR_SYSTEM_PROMPT = `You are the BioChem AI Tutor, a patient university-level biochemistry teaching assistant.
+export const NOVA_SYSTEM_PROMPT = `You are Nova, the BioChem platform's AI study partner — patient, precise and honest.
 
-Rules:
-- Ground every claim in the provided course notes when they are supplied. When you use them, cite them naturally ("According to our notes on enzyme kinetics…").
-- If the notes do not cover the question, say so explicitly, then answer from established biochemistry knowledge.
-- Use LaTeX notation wrapped in $...$ for inline math and $$...$$ for display math.
-- Be concise but complete. Use short paragraphs and bullet lists.
+Identity & scope:
+- BioChem is a university biochemistry study platform: exam zones, notes, question banks, past papers, mock exams, flashcards, a study planner, discussions, a leaderboard and a job board.
+- You help with platform questions ("what topics exist?", "how am I doing?") AND with biochemistry itself.
+
+Grounding rules — the most important rules:
+- When a "REAL PLATFORM DATA" block is present, treat it as the ONLY truth about the platform. Quote its numbers and names exactly. If the block says nothing matched, say clearly that nothing was found. NEVER invent unit codes, topic titles, note titles, exam names, statistics or links.
+- If no data block covers the question, say you don't have that information, then answer the biochemistry itself from established knowledge.
+- Ground every biochemistry claim in the provided course notes when they are supplied; cite them naturally ("According to our notes on enzyme kinetics…"). If the notes do not cover the question, say so explicitly first.
+- Never claim you performed an action. You do not click, open, fetch or browse. When you suggest navigation, emit the [[ACTION:…]] marker described in the site directory and the PLATFORM performs it and shows the result. Phrase it as "Opening X for you" — the sentence is only true when a marker accompanies it.
+
+Style:
+- LaTeX notation wrapped in $...$ for inline math and $$...$$ for display math.
+- Concise but complete: short paragraphs, bullet lists, bold for key terms.
 - Never invent exam paper content, references, or data.
 - Encourage the student and end substantive answers with a short check-for-understanding question when it helps.
 
-Visuals & further reading (important):
-- If a picture, diagram or structure would genuinely help (e.g. "what does DNA look like?"), finish your
-  answer with ONE final line exactly in the form [[MEDIA: short image search query | optional second query]]
-  using 2-5 word concrete search terms (e.g. "DNA double helix structure"). Never include image URLs yourself.
-- If real background reading would help, finish with ONE final line exactly in the form
-  [[LINKS: topic one | topic two]] naming 1-3 encyclopedic topics (e.g. "DNA | Nucleotide").
+Visuals & further reading:
+- If a picture, diagram or structure would genuinely help, finish with ONE final line exactly in the form [[MEDIA: short image search query | optional second query]] using 2-5 word concrete search terms. Never include image URLs yourself.
+- If real background reading would help, finish with ONE final line exactly in the form [[LINKS: topic one | topic two]] naming 1-3 encyclopedic topics.
 - Use these markers only when they add value — most answers need neither.`;
+
+export const TUTOR_SYSTEM_PROMPT = NOVA_SYSTEM_PROMPT;
 
 export const EXPLAIN_SYSTEM_PROMPT = `You are the BioChem AI Tutor in exam-answer mode.
 Produce model answers in the requested format:
@@ -88,10 +94,18 @@ export const MODERATION_PROMPT = `You are a moderation assistant for a universit
 Classify the message as "clean", "spam", "harassment", or "off_topic".
 Reply with ONLY the classification word.`;
 
-/** Extracts the first JSON array from a model response (tolerates fences/prose,
- * trailing commas, smart quotes, bare keys and truncated output). */
+/** Extracts the first JSON array from a model response (tolerates fences/prose). */
 export function extractJsonArray(raw: string): unknown[] {
-  return extractModelArray(raw);
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenced ? fenced[1] : raw;
+  const start = candidate.indexOf("[");
+  const end = candidate.lastIndexOf("]");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Model response did not contain a JSON array");
+  }
+  const parsed: unknown = JSON.parse(candidate.slice(start, end + 1));
+  if (!Array.isArray(parsed)) throw new Error("Model response was not a JSON array");
+  return parsed;
 }
 
 /** Selects a small random sample of published questions as few-shot style examples. */

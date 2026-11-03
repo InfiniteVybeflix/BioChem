@@ -35,6 +35,8 @@ export async function requireAiAccess(options: {
   flag: AiFeatureFlag;
   task: AiTask;
   capability?: Capability;
+  /** Direct navigation turns are answered without the gateway — opt out. */
+  skipGatewayCheck?: boolean;
 }): Promise<AiRouteGuard | { ok: false; response: NextResponse }> {
   const auth = await requireUser(options.capability);
   if (!auth.ok) return auth;
@@ -54,7 +56,7 @@ export async function requireAiAccess(options: {
     return { ok: false, response: jsonError(FLAG_DISABLED_MESSAGE[options.flag], 403) };
   }
 
-  if (!gatewayConfigured()) {
+  if (!options.skipGatewayCheck && !gatewayConfigured()) {
     return {
       ok: false,
       response: jsonError("Aevibron gateway is not configured on this deployment", 503),
