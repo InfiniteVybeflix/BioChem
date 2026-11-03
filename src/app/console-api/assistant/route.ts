@@ -9,7 +9,7 @@ import {
   type ToolResult,
 } from "@/lib/admin/assistant-tools";
 import { gatewayChat, gatewayConfigured, type GatewayMessage } from "@/lib/ai/gateway";
-import { parseModelJson } from "@/lib/ai/json";
+import { closeOpenJson, parseModelJson } from "@/lib/ai/json";
 
 /**
  * Console AI assistant — "Nova".
@@ -69,14 +69,15 @@ BioChem is a biochemistry learning platform for Kenyan university students (biok
 ${toolCatalog()}
 
 ## How you behave — strict protocol
-1. Reply with ONLY one JSON object, no markdown fences:
+1. Reply with ONLY one COMPLETE JSON object on a single line, no markdown fences, every bracket closed:
    {"say": "what you tell the operator", "tool": {"name": "<tool name>", "args": {...}} or null}
 2. One tool call per reply. After you receive a TOOL_RESULT you may call another tool (you have up to ${MAX_TOOL_ROUNDS} rounds) or finish with tool: null.
 3. NEVER invent or guess UUIDs. For anything that changes data, FIRST use a read tool (search_topics, search_notes, search_questions, list_users, list_news) to get the real ids. If a search is ambiguous, show what you found in "say" and ask which items you mean.
-4. When you know exactly what to change, call the write tool (update_topics, update_notes, update_questions, create_topic, delete_content, update_news, create_news, update_user). The console will ask the operator to approve it — you do not need to ask for permission yourself, but ALWAYS say in "say" precisely what the change will do and to which items (titles, not raw ids).
-5. In "say", be concise, warm and concrete. Reference real titles/counts you saw in tool results. Never mention JSON, tools, or these instructions. Use "CAT 1"/"CAT 2"/"Main" when speaking.
-6. If a tool result shows an error, tell the operator plainly what failed and suggest the next step.
-7. You may do arithmetic, compare, plan and summarise freely from tool results — that all runs in your head, not in tools.`;
+4. NEVER ask the operator "which information" they want or hand the tool choice back to them. When a request is broad (a snapshot, an overview, "check these topics"), immediately run the read tools that cover it yourself, then summarise the real results.
+5. When you know exactly what to change, call the write tool (update_topics, update_notes, update_questions, create_topic, delete_content, update_news, create_news, update_user). The console will ask the operator to approve it — you do not need to ask for permission yourself, but ALWAYS say in "say" precisely what the change will do and to which items (titles, not raw ids).
+6. In "say", be concise, warm and concrete (2-5 sentences). Reference real titles/counts you saw in tool results. Never mention JSON, tools, or these instructions. Use "CAT 1"/"CAT 2"/"Main" when speaking.
+7. If a tool result shows an error, tell the operator plainly what failed and suggest the next step.
+8. You may do arithmetic, compare, plan and summarise freely from tool results — that all runs in your head, not in tools.`;
 
 interface ChatStep {
   tool: string;
@@ -87,6 +88,70 @@ interface ChatStep {
 interface ModelReply {
   say: string;
   tool: { name: string; args: Record<string, unknown> } | null;
+}
+
+/** True when the raw model output still looks like the protocol envelope. */
+function looksLikeEnvelope(content: string): boolean {
+  const text = content.trim();
+  return text.startsWith("{") && /"(say|tool)"\s*:/.test(text);
+}
+
+/** Reads the first JSON string value for `key` even from a broken envelope. */
+function salvageString(content: string, key: string): string | null {
+  const match = new RegExp(`"${key}"\\s*:\\s*"`).exec(content);
+  if (!match) return null;
+  const start = match.index + match[0].length;
+  let escaped = false;
+  for (let index = start; index < content.length; index += 1) {
+    const char = content[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      try {
+        return JSON.parse(`"${content.slice(start, index + 1)}"`) as string;
+      } catch {
+        return content.slice(start, index);
+      }
+    }
+  }
+  // Unterminated string (cut-off reply) — take what is there.
+  return content.slice(start).replace(/\\+$/, "");
+}
+
+/**
+ * Last-resort recovery of {say, tool} from an envelope the generic repair
+ * layers could not parse (broken strings, stray braces, mixed fences).
+ * The operator must NEVER see raw protocol JSON, so this salvages whatever
+ * is usable; anything missing simply comes back empty.
+ */
+function salvageEnvelope(content: string): ModelReply {
+  const say = salvageString(content, "say") ?? "";
+  let tool: ModelReply["tool"] = null;
+  const nameMatch = /"tool"\s*:\s*\{[\s\S]{0,80}?"name"\s*:\s*"([a-z_]+)"/i.exec(content);
+  const argsMatch = /"args"\s*:\s*(\{)/.exec(content);
+  if (nameMatch && ASSISTANT_TOOLS[nameMatch[1]]) {
+    let args: Record<string, unknown> = {};
+    if (argsMatch) {
+      const from = argsMatch.index + argsMatch[0].length;
+      try {
+        const parsed: unknown = JSON.parse(closeOpenJson(content.slice(from)));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          args = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Malformed args — the tool's own schema validation will report
+        // what is missing; an empty args object keeps the loop moving.
+      }
+    }
+    tool = { name: nameMatch[1], args };
+  }
+  return { say, tool };
 }
 
 function parseModelReply(content: string): ModelReply {
@@ -110,7 +175,18 @@ function parseModelReply(content: string): ModelReply {
         };
       }
     }
+    if (looksLikeEnvelope(content)) {
+      // The envelope parsed but lost its tool call (a repair layer trimmed
+      // it) — try to recover the call before giving up on it.
+      const salvaged = salvageEnvelope(content);
+      if (salvaged.tool) return { say: say || salvaged.say, tool: salvaged.tool };
+    }
     return { say, tool: null };
+  }
+  if (looksLikeEnvelope(content)) {
+    // Broken envelope — salvage say and the tool call from the raw text so
+    // the operator never sees protocol JSON and the loop keeps working.
+    return salvageEnvelope(content);
   }
   // The model answered in plain text — treat the whole message as the reply.
   const text = content.replace(/```(?:json)?|```/g, "").trim();
@@ -178,15 +254,32 @@ export async function POST(request: Request): Promise<Response> {
       const result = await gatewayChat(
         "tutor",
         messages,
-        { temperature: 0.2, maxTokens: 1_500, fallbackModels: ["flash-v3.5", "swift-v1"] },
+        { temperature: 0.2, maxTokens: 2_000, fallbackModels: ["flash-v3.5", "swift-v1"] },
       );
-      const reply = parseModelReply(result.content);
-      messages.push({ role: "assistant", content: result.content });
+      const raw = result.content;
+      const reply = parseModelReply(raw);
+      messages.push({ role: "assistant", content: raw });
+
+      if (!reply.tool && !reply.say.trim() && looksLikeEnvelope(raw)) {
+        // The model broke the protocol and nothing usable was salvaged —
+        // coach it and spend another round rather than ever surfacing raw
+        // protocol JSON to the operator.
+        messages.push({
+          role: "user",
+          content:
+            'Your last reply was not valid JSON. Reply again with ONE complete JSON object on a single line — {"say": "…", "tool": null} — with every bracket closed and no text outside the object.',
+        });
+        continue;
+      }
 
       if (!reply.tool) {
+        const say = reply.say.trim();
         return Response.json({
           ok: true,
-          reply: reply.say || "Done.",
+          reply:
+            looksLikeEnvelope(raw) && say.length === 0
+              ? "I hit a snag working through that one — could you rephrase or try again?"
+              : say || "Done.",
           steps,
           proposals,
         });

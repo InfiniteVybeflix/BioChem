@@ -75,6 +75,15 @@ export function OnboardingWizard({
       return;
     }
     toast.success(`Welcome aboard, ${initialName.split(" ")[0]}!`);
+    if (isStudent) {
+      // Arm the welcome tour — the dashboard picks this up and walks the
+      // new student around the app once.
+      try {
+        window.localStorage.setItem("biochem.tour.pending.v1", "1");
+      } catch {
+        // No storage — the tour is simply skipped, nothing else depends on it.
+      }
+    }
     router.push(isStudent ? "/dashboard" : "/lecturer");
     router.refresh();
   };

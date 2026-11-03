@@ -239,20 +239,18 @@ export function MockHub({
             </Select>
           </div>
 
-          <div>
+          <Collapsible open={topicsOpen} onOpenChange={setTopicsOpen}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">Topics</span>
-              <Collapsible open={topicsOpen} onOpenChange={setTopicsOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" aria-expanded={topicsOpen}>
-                    {selectedTopics.length > 0 ? `${selectedTopics.length} selected` : "All topics"}
-                    <ChevronDown
-                      className={cn("size-4 transition-transform", topicsOpen && "rotate-180")}
-                      aria-hidden
-                    />
-                  </Button>
-                </CollapsibleTrigger>
-              </Collapsible>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" aria-expanded={topicsOpen}>
+                  {selectedTopics.length > 0 ? `${selectedTopics.length} selected` : "All topics"}
+                  <ChevronDown
+                    className={cn("size-4 transition-transform", topicsOpen && "rotate-180")}
+                    aria-hidden
+                  />
+                </Button>
+              </CollapsibleTrigger>
             </div>
             <CollapsibleContent>
               {topicsLoading ? (
@@ -282,7 +280,7 @@ export function MockHub({
                 </div>
               )}
             </CollapsibleContent>
-          </div>
+          </Collapsible>
 
           <div className="space-y-1.5">
             <Label htmlFor="mock-difficulty">Difficulty</Label>

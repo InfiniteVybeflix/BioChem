@@ -22,6 +22,7 @@ import { AdSlot } from "@/components/ads/ad-slot";
 import { NewsStrip, type NewsListItem } from "@/components/news/news-cards";
 import { loadNewsSurface } from "@/lib/news/queries";
 import { Markdown } from "@/components/markdown/markdown";
+import { AppTour, TourReplayButton } from "@/components/onboarding/app-tour";
 import { getAuthContext } from "@/lib/supabase/server";
 import { greetingForHour, ZONES } from "@/lib/constants";
 import { daysUntil } from "@/lib/time";
@@ -128,12 +129,15 @@ export default async function DashboardPage() {
             : "Here's where your revision stands today."
         }
         actions={
-          <Button asChild className="shadow-primary/25 gap-2 shadow-lg">
-            <Link href="/mocks">
-              <GraduationCap className="size-4" aria-hidden />
-              Take a mock exam
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <TourReplayButton />
+            <Button asChild className="shadow-primary/25 gap-2 shadow-lg">
+              <Link href="/mocks">
+                <GraduationCap className="size-4" aria-hidden />
+                Take a mock exam
+              </Link>
+            </Button>
+          </div>
         }
       />
 
@@ -400,6 +404,9 @@ export default async function DashboardPage() {
           <AdSlot placement="sidebar" />
         </div>
       </div>
+
+      {/* One-time welcome tour (after onboarding) + replayable any time. */}
+      <AppTour />
     </div>
   );
 }

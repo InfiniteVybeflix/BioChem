@@ -62,8 +62,22 @@ export function extractBalanced(
         if (depth === 0) return { text: text.slice(start, index + 1), complete: true };
       }
     }
-    // Unbalanced (truncated) — fall through to repair below.
-    const repaired = repairTruncated(text.slice(start), open, close);
+    // Unbalanced — either a dropped closing bracket (complete content!)
+    // or a genuine mid-stream cut. First try closing the open brackets
+    // WITHOUT cutting anything, so a model that dropped its final `}}`
+    // keeps every byte; only if that fails to parse, cut the incomplete
+    // tail off (the old behaviour) and let the caller retry.
+    const slice = text.slice(start);
+    const closed = closeOpenJson(slice);
+    if (closed !== slice) {
+      try {
+        JSON.parse(closed);
+        return { text: closed, complete: false };
+      } catch {
+        // Not closable — fall through to the cutting repair.
+      }
+    }
+    const repaired = repairTruncated(slice, open, close);
     return repaired ? { text: repaired, complete: false } : null;
   }
   return null;
@@ -306,6 +320,36 @@ function quoteBareKeys(text: string): string {
 }
 
 /**
+ * Closes an unbalanced payload WITHOUT cutting anything. Models writing a
+ * protocol envelope sometimes drop the final `}}` of an otherwise complete
+ * object — the cutting repair (repairTruncatedJson) would destroy real data
+ * in that case, so this runs FIRST for unbalanced extractions. Also closes
+ * strings left open by a genuine truncation (harmless there: the parse
+ * simply fails and the cutting repair still runs next).
+ */
+export function closeOpenJson(input: string): string {
+  let text = input.trimEnd();
+  if (text.length === 0) return text;
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+  for (const char of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{" || char === "[") stack.push(char);
+    else if (char === "}" || char === "]") stack.pop();
+  }
+  if (inString) text += '"';
+  while (stack.length > 0) text += stack.pop() === "{" ? "}" : "]";
+  return text;
+}
+
+/**
  * Cuts a truncated payload back to its last complete element and closes
  * every open string/bracket, so a response that hit the token limit still
  * parses (the caller retries for the full version; the repaired value is
@@ -361,6 +405,16 @@ export function parseModelJson(raw: string): ParseOutcome<unknown> {
     requoteSingleQuoted(normaliseTokens(dropTrailingCommas(text))),
   ];
   if (!complete) {
+    // A dropped closing bracket (complete content, unbalanced payload) is
+    // fixed by closing only — cutting would throw away real data.
+    const closed = closeOpenJson(text);
+    if (closed !== text) {
+      candidates.unshift(
+        closed,
+        normaliseTokens(dropTrailingCommas(closed)),
+        quoteBareKeys(normaliseTokens(dropTrailingCommas(closed))),
+      );
+    }
     const repaired = repairTruncatedJson(text);
     if (repaired) {
       candidates.unshift(repaired);

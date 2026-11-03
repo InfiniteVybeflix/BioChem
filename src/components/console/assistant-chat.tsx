@@ -88,6 +88,44 @@ function nextId(): string {
   return `m${localId}`;
 }
 
+/**
+ * Safety net: if a protocol envelope ever leaks into the reply text
+ * (server should have salvaged it, but a broken gateway response can slip
+ * through), parse what is usable and show only the human sentence — the
+ * operator must never read raw {"say": …, "tool": …} JSON.
+ */
+function displayReply(raw: string): string {
+  const text = (raw ?? "").trim();
+  if (!text.startsWith("{") || !/"(say|tool)"\s*:/.test(text)) return text;
+  let candidate = text.replace(/^```(?:json)?|```$/g, "").trim();
+  // Close any brackets the gateway cut off, then try the parse.
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+  for (const char of candidate) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{" || char === "[") stack.push(char);
+    else if (char === "}" || char === "]") stack.pop();
+  }
+  if (inString) candidate += '"';
+  while (stack.length > 0) candidate += stack.pop() === "{" ? "}" : "]";
+  try {
+    const parsed = JSON.parse(candidate) as { say?: unknown };
+    if (parsed && typeof parsed.say === "string" && parsed.say.trim().length > 0) {
+      return parsed.say;
+    }
+  } catch {
+    // Fall through to the friendly fallback below.
+  }
+  return "I hit a snag working through that one — could you rephrase or try again?";
+}
+
 export function AssistantChat() {
   const base = useConsoleBase();
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -132,7 +170,13 @@ export function AssistantChat() {
         }));
         setMessages((prev) => [
           ...prev,
-          { id: nextId(), role: "assistant", text: payload.reply ?? "", steps: payload.steps ?? [], proposals },
+          {
+            id: nextId(),
+            role: "assistant",
+            text: displayReply(payload.reply ?? ""),
+            steps: payload.steps ?? [],
+            proposals,
+          },
         ]);
         historyRef.current = [
           ...historyRef.current,
