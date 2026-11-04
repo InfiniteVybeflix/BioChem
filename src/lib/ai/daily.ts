@@ -153,17 +153,24 @@ export async function generateDailyQuestions(
   if (existing && existing.length > 0) return existing;
 
   // 1-2 published MCQs from the bank as few-shot style examples, matching the
-  // requested difficulty when possible.
+  // requested difficulty when possible. Drawn from a random slice so the
+  // model does not anchor on the same two questions every single day.
   const loadExamples = async (difficulty: Difficulty | null): Promise<QuestionRow[]> => {
     let query = admin
       .from("questions")
       .select("*")
       .eq("status", "published")
       .eq("type", "mcq")
-      .limit(2);
+      .limit(30);
     if (difficulty) query = query.eq("difficulty", difficulty);
     const { data } = await query;
-    return data ?? [];
+    const pool = data ?? [];
+    // Fisher–Yates over the fetched pool, then keep two.
+    for (let i = pool.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, 2);
   };
   let examples = await loadExamples(settings.difficulty);
   if (examples.length === 0) examples = await loadExamples(null);
@@ -176,6 +183,30 @@ export async function generateDailyQuestions(
       topicInstruction = `Focus on these topics: ${titles.join(", ")}.`;
     }
   }
+
+  // Anti-repetition: tell the model exactly what this user was asked
+  // recently (last 14 days) so it never serves the same set again.
+  const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: recentRows } = await admin
+    .from("daily_questions")
+    .select("payload")
+    .eq("user_id", userId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(60);
+  const recentStems = (recentRows ?? [])
+    .map((entry) => {
+      const payload = entry.payload as { stem?: unknown } | null;
+      return typeof payload?.stem === "string" ? payload.stem.slice(0, 160) : null;
+    })
+    .filter((stem): stem is string => stem !== null)
+    .slice(0, 40);
+  const repetitionInstruction =
+    recentStems.length > 0
+      ? `\n\nSTRICTLY avoid repetition. The user was already asked these recent questions (do not repeat them, do not re-ask the same fact with different wording, and prefer different sub-topics):\n${recentStems
+          .map((stem) => `- ${stem}`)
+          .join("\n")}`
+      : "";
 
   const instructions = `Generate exactly ${settings.count} questions. Difficulty: ${settings.difficulty}. ${topicInstruction}`;
 
@@ -193,8 +224,8 @@ export async function generateDailyQuestions(
         role: "user",
         content:
           (examples.length > 0
-            ? `${instructions}\n\nStyle examples:\n\n${questionExamples(examples)}`
-            : instructions) + retryNote,
+            ? `${instructions}${repetitionInstruction}\n\nStyle examples:\n\n${questionExamples(examples)}`
+            : `${instructions}${repetitionInstruction}`) + retryNote,
       },
     ]);
     try {

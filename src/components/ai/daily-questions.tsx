@@ -121,16 +121,9 @@ export function DailyQuestions({
 
   const answeredCount = questions.filter((question) => question.answered_at !== null).length;
 
-  // Unanswered questions first, original order preserved within each group.
-  const orderedQuestions = useMemo(
-    () =>
-      [...questions].sort((a, b) => {
-        const aAnswered = a.answered_at !== null ? 1 : 0;
-        const bAnswered = b.answered_at !== null ? 1 : 0;
-        return aAnswered - bAnswered;
-      }),
-    [questions],
-  );
+  // Render in the server's stable order. Never re-sort after an answer:
+  // moving the just-answered question to the end made the fresh answer
+  // appear on "the last question" and renumbered everything mid-session.
 
   const prettyDate = useMemo(() => {
     try {
@@ -339,7 +332,7 @@ export function DailyQuestions({
         )
       ) : (
         <ul className="space-y-4">
-          {orderedQuestions.map((question, index) => {
+          {questions.map((question, index) => {
             const answered = question.answered_at !== null;
             const options = question.payload.options ?? [];
             const correctKey = question.payload.answer;

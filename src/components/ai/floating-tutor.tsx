@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BrainCircuit, History, Loader2, Send, SquarePen, X } from "lucide-react";
+import { History, Loader2, Send, SquarePen, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
   StreamingBubble,
   type ChatMessage,
 } from "@/components/ai/message-bubble";
+import { NovaMark } from "@/components/ai/nova-mark";
 import { useUser } from "@/hooks/use-user";
 import { cn } from "@/lib/utils";
 
@@ -22,8 +23,8 @@ import { cn } from "@/lib/utils";
  * Floating AI tutor — a launcher pinned to the bottom-right of every
  * authenticated page (hidden on the full /ai/tutor page) that opens a
  * compact chat panel. Same backend as the tutor page: streamed SSE
- * replies, persisted conversations with rename/delete, reply modes and
- * quick-start prompts.
+ * replies, persisted conversations with rename/delete/archive, message
+ * editing + regeneration, reply modes and quick-start prompts.
  */
 
 type TutorMode = "normal" | "exam" | "eli5" | "steps";
@@ -64,6 +65,7 @@ export function FloatingTutor() {
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const onTutorPage = pathname === "/ai/tutor";
 
@@ -136,7 +138,7 @@ export function FloatingTutor() {
     resizeComposer();
   }, [draft, resizeComposer]);
 
-  // Escape closes the panel.
+  // Escape closes the panel; abort refreshes on unmount.
   useEffect(() => {
     if (!open) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -145,6 +147,8 @@ export function FloatingTutor() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const loadConversation = useCallback(
     async (id: string) => {
@@ -230,6 +234,62 @@ export function FloatingTutor() {
     [supabase],
   );
 
+  /**
+   * Reads the platform's SSE protocol off a response and renders the
+   * growing answer live. Returns the full cleaned reply text.
+   */
+  const readSse = useCallback(
+    async (response: Response, signal: AbortSignal): Promise<string> => {
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let full = "";
+      let sawDone = false;
+      setStreamingText("");
+
+      const handleData = (payload: string) => {
+        if (payload === "[DONE]") {
+          sawDone = true;
+          return;
+        }
+        try {
+          const parsed: unknown = JSON.parse(payload);
+          if (parsed && typeof parsed === "object") {
+            const record = parsed as Record<string, unknown>;
+            if (typeof record.error === "string") {
+              toast.error(record.error);
+              return;
+            }
+            if (typeof record.delta === "string" && record.delta.length > 0) {
+              full += record.delta;
+              setStreamingText(full);
+            }
+          }
+        } catch {
+          // Non-JSON data line — ignore.
+        }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() ?? "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith("data:")) continue;
+          handleData(line.slice(5).trim());
+          if (sawDone) break;
+        }
+        if (sawDone || signal.aborted) break;
+      }
+
+      return full.replace(/\[\[(?:MEDIA|LINKS):[^\]]*\]\]/g, "").trimEnd();
+    },
+    [],
+  );
+
   const sendMessage = useCallback(
     async (raw?: string) => {
       const trimmed = (raw ?? draft).trim();
@@ -248,6 +308,8 @@ export function FloatingTutor() {
         },
       ]);
 
+      const controller = new AbortController();
+      abortRef.current = controller;
       try {
         const response = await fetch("/api/ai/chat", {
           method: "POST",
@@ -257,6 +319,7 @@ export function FloatingTutor() {
             message,
             noteIds: [],
           }),
+          signal: controller.signal,
         });
 
         if (response.status === 202) {
@@ -289,76 +352,154 @@ export function FloatingTutor() {
         const conversationId = response.headers.get("X-Conversation-Id");
         if (conversationId && !activeId) setActiveId(conversationId);
 
-        // Read the SSE stream (same protocol as the tutor page).
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let full = "";
-        let sawDone = false;
-        setStreamingText("");
-
-        const handleData = (payload: string) => {
-          if (payload === "[DONE]") {
-            sawDone = true;
-            return;
-          }
-          try {
-            const parsed: unknown = JSON.parse(payload);
-            if (parsed && typeof parsed === "object") {
-              const record = parsed as Record<string, unknown>;
-              if (typeof record.error === "string") {
-                toast.error(record.error);
-                return;
-              }
-              if (typeof record.delta === "string" && record.delta.length > 0) {
-                full += record.delta;
-                setStreamingText(full);
-              }
-            }
-          } catch {
-            // Non-JSON data line — ignore.
-          }
-        };
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop() ?? "";
-          for (const part of parts) {
-            const line = part.trim();
-            if (!line.startsWith("data:")) continue;
-            handleData(line.slice(5).trim());
-            if (sawDone) break;
-          }
-          if (sawDone) break;
-        }
-
+        const full = await readSse(response, controller.signal);
         if (full.trim().length > 0) {
-          const cleanText = full.replace(/\[\[(?:MEDIA|LINKS):[^\]]*\]\]/g, "").trimEnd();
           setMessages((prev) => [
             ...prev,
             {
               id: `assistant-${Date.now()}`,
               role: "assistant",
-              content: cleanText,
+              content: full,
               created_at: new Date().toISOString(),
             },
           ]);
         }
         await refreshConversations();
       } catch (error) {
-        console.error("[floating-tutor] send failed:", error);
-        toast.error("The tutor could not be reached — please try again.");
-        setDraft(trimmed);
+        if ((error as Error).name !== "AbortError") {
+          console.error("[floating-tutor] send failed:", error);
+          toast.error("The tutor could not be reached — please try again.");
+          setDraft(trimmed);
+        }
       } finally {
+        abortRef.current = null;
         setStreamingText(null);
         setPending(false);
       }
     },
-    [draft, pending, ready, flagOff, mode, activeId, refreshConversations],
+    [draft, pending, ready, flagOff, mode, activeId, refreshConversations, readSse],
   );
+
+  /** Edit an earlier user message — the thread is rewritten after it. */
+  const editMessage = useCallback(
+    async (messageId: string, content: string) => {
+      if (!activeId || pending) return;
+      const index = messages.findIndex((message) => message.id === messageId);
+      if (index < 0) return;
+      setPending(true);
+
+      // Optimistic: keep everything before the edit, apply the new content.
+      const kept = messages.slice(0, index);
+      setMessages([...kept, { ...messages[index], content }]);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        const response = await fetch("/api/ai/chat/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversationId: activeId, messageId, content }),
+          signal: controller.signal,
+        });
+        if (response.status === 202) {
+          toast.info("Gateway busy — your edit was saved and queued; you'll be notified when it's answered.");
+          await refreshConversations();
+          return;
+        }
+        if (!response.ok || !response.body) {
+          const data = (await response.json().catch(() => ({}))) as { error?: string };
+          toast.error(data.error ?? "Could not rewrite the thread — reloading.");
+          await loadConversation(activeId);
+          return;
+        }
+        const full = await readSse(response, controller.signal);
+        if (full.trim().length > 0) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `assistant-${Date.now()}`,
+              role: "assistant",
+              content: full,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+        await refreshConversations();
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") {
+          console.error("[floating-tutor] edit failed:", error);
+          toast.error("The edit could not be completed — reloading the thread.");
+          await loadConversation(activeId);
+        }
+      } finally {
+        abortRef.current = null;
+        setStreamingText(null);
+        setPending(false);
+      }
+    },
+    [activeId, pending, messages, refreshConversations, loadConversation, readSse],
+  );
+
+  /** Regenerate the latest assistant reply. */
+  const regenerate = useCallback(async () => {
+    if (!activeId || pending) return;
+    setPending(true);
+
+    // Drop the last assistant reply optimistically.
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      return last && last.role === "assistant" ? prev.slice(0, -1) : prev;
+    });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      const response = await fetch("/api/ai/chat/regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: activeId }),
+        signal: controller.signal,
+      });
+      if (response.status === 202) {
+        toast.info("Gateway busy — a fresh answer was queued for this question.");
+        await refreshConversations();
+        return;
+      }
+      if (!response.ok || !response.body) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        toast.error(data.error ?? "Could not regenerate — reloading.");
+        await loadConversation(activeId);
+        return;
+      }
+      const full = await readSse(response, controller.signal);
+      if (full.trim().length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            content: full,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      await refreshConversations();
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") {
+        console.error("[floating-tutor] regenerate failed:", error);
+        toast.error("The answer could not be regenerated — reloading the thread.");
+        await loadConversation(activeId);
+      }
+    } finally {
+      abortRef.current = null;
+      setStreamingText(null);
+      setPending(false);
+    }
+  }, [activeId, pending, refreshConversations, loadConversation, readSse]);
+
+  const stopGenerating = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -366,6 +507,20 @@ export function FloatingTutor() {
       void sendMessage();
     }
   };
+
+  // Edit / regenerate affordances, mirroring the full tutor page.
+  const lastAssistantId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "assistant") return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+  const lastUserId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "user") return messages[i].id;
+    }
+    return null;
+  }, [messages]);
 
   if (onTutorPage) return null;
 
@@ -385,23 +540,29 @@ export function FloatingTutor() {
           {/* Header */}
           <header className="border-border/60 flex items-center gap-2 border-b px-3 py-2.5">
             <span className="from-primary to-primary/70 text-primary-foreground flex size-8 items-center justify-center rounded-lg bg-gradient-to-br">
-              <BrainCircuit className="size-4" aria-hidden />
+              <NovaMark className="size-4" />
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">
                 {historyOpen ? "Conversations" : activeTitle}
               </p>
-              <p className="text-muted-foreground text-[11px] leading-none">BioChem AI tutor</p>
+              <p className="text-muted-foreground text-[11px] leading-none">Nova · BioChem AI tutor</p>
             </div>
             <Button
-              variant="ghost"
-              size="icon"
-              className="focus-ring size-8"
+              variant={historyOpen ? "secondary" : "ghost"}
+              size="sm"
+              className="focus-ring h-8 gap-1.5 px-2 text-xs"
               aria-label={historyOpen ? "Back to chat" : "Conversation history"}
               aria-pressed={historyOpen}
               onClick={() => setHistoryOpen((prev) => !prev)}
             >
-              <History className="size-4" aria-hidden />
+              <History className="size-3.5" aria-hidden />
+              <span>History</span>
+              {!historyOpen && conversations.length > 0 ? (
+                <span className="bg-primary/15 text-primary rounded-full px-1.5 text-[10px] font-semibold tabular-nums">
+                  {conversations.length}
+                </span>
+              ) : null}
             </Button>
             <Button
               variant="ghost"
@@ -480,7 +641,15 @@ export function FloatingTutor() {
                 ) : (
                   <>
                     {messages.map((message) => (
-                      <MessageBubble key={message.id} message={message} />
+                      <MessageBubble
+                        key={message.id}
+                        message={message}
+                        showEdit={message.id === lastUserId && !pending}
+                        showRegenerate={message.id === lastAssistantId && !pending}
+                        onEdit={(id, content) => void editMessage(id, content)}
+                        onRegenerate={() => void regenerate()}
+                        busy={pending}
+                      />
                     ))}
                     {streamingText !== null ? <StreamingBubble text={streamingText} /> : null}
                   </>
@@ -516,18 +685,25 @@ export function FloatingTutor() {
                     disabled={composerDisabled}
                     aria-label="Message the AI tutor"
                   />
-                  <Button
-                    onClick={() => void sendMessage()}
-                    disabled={composerDisabled || draft.trim().length === 0}
-                    className="focus-ring size-10 shrink-0 p-0"
-                    aria-label="Send message"
-                  >
-                    {pending ? (
-                      <Loader2 className="size-4 animate-spin" aria-hidden />
-                    ) : (
+                  {pending ? (
+                    <Button
+                      onClick={stopGenerating}
+                      variant="outline"
+                      className="focus-ring size-10 shrink-0 p-0"
+                      aria-label="Stop generating"
+                    >
+                      <span className="bg-foreground block size-2.5 rounded-[2px]" aria-hidden />
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => void sendMessage()}
+                      disabled={composerDisabled || draft.trim().length === 0}
+                      className="focus-ring size-10 shrink-0 p-0"
+                      aria-label="Send message"
+                    >
                       <Send className="size-4" aria-hidden />
-                    )}
-                  </Button>
+                    </Button>
+                  )}
                 </div>
               </div>
             </>
@@ -549,7 +725,7 @@ export function FloatingTutor() {
         {pending ? (
           <Loader2 className="size-6 animate-spin" aria-hidden />
         ) : (
-          <BrainCircuit className="size-6" aria-hidden />
+          <NovaMark className="size-6" />
         )}
       </button>
     </>

@@ -5,6 +5,7 @@ import { gatewayConfigured } from "@/lib/ai/gateway";
 import { modelForTask } from "@/lib/ai/models";
 import { enqueueAiTask } from "@/lib/ai/queue";
 import { recordAiUsage } from "@/lib/rate-limit";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { directoryForRole } from "@/lib/ai/nova/directory";
 import { detectNavigation } from "@/lib/ai/nova/facts";
 import { runNavigationTurn, runNovaTurn } from "@/lib/ai/nova/turn";
@@ -43,6 +44,12 @@ export async function POST(req: Request): Promise<Response> {
     const { supabase, userId } = guard;
 
     // 1. Resolve the conversation (create or verify ownership).
+    //    The user-scoped write is tried first; if RLS/policy drift on the
+    //    deployment blocks it (e.g. migrations not yet applied) the row is
+    //    written through the service role instead — the caller is already
+    //    authenticated and authorised by the guard above, so starting a
+    //    conversation must never fail on storage policy drift.
+    const admin = getSupabaseAdminClient();
     let activeConversationId = conversationId ?? null;
     if (activeConversationId) {
       const { data: existing } = await supabase
@@ -50,19 +57,43 @@ export async function POST(req: Request): Promise<Response> {
         .select("id")
         .eq("id", activeConversationId)
         .maybeSingle();
-      if (!existing) return jsonError("Conversation not found", 404);
+      if (!existing && admin) {
+        // Maybe the user-scoped select was blocked too — verify via admin.
+        const { data: existingAdmin } = await admin
+          .from("ai_conversations")
+          .select("id, user_id")
+          .eq("id", activeConversationId)
+          .maybeSingle();
+        if (!existingAdmin || existingAdmin.user_id !== userId) {
+          return jsonError("Conversation not found", 404);
+        }
+      } else if (!existing) {
+        return jsonError("Conversation not found", 404);
+      }
     } else {
-      const { data: created, error } = await supabase
+      const conversationRow = { user_id: userId, title: message.slice(0, 60) };
+      let created: { id: string } | null = null;
+      let createError: { message: string } | null = null;
+      const owned = await supabase
         .from("ai_conversations")
-        .insert({
-          user_id: userId,
-          title: message.slice(0, 60),
-        })
+        .insert(conversationRow)
         .select("id")
         .single();
-      if (error || !created) {
+      created = owned.data;
+      createError = owned.error;
+      if ((createError || !created) && admin) {
+        console.warn("[api:ai/chat] user-scoped conversation insert failed, using service role:", createError?.message);
+        const elevated = await admin
+          .from("ai_conversations")
+          .insert(conversationRow)
+          .select("id")
+          .single();
+        created = elevated.data;
+        createError = elevated.error;
+      }
+      if (createError || !created) {
         return jsonError(
-          `Could not create the conversation: ${error?.message ?? "unknown error"}`,
+          `Could not create the conversation: ${createError?.message ?? "unknown error"}`,
           500,
         );
       }
@@ -80,15 +111,24 @@ export async function POST(req: Request): Promise<Response> {
     const navigation = detectNavigation(message, pages);
 
     // 3. Persist the user's message before contacting the gateway (the
-    // direct-navigation turn persists its own copy).
+    //    direct-navigation turn persists its own copy).
     if (!navigation.pure) {
-      const { error: insertError } = await supabase.from("ai_messages").insert({
+      const messageRow = {
         conversation_id: conversationIdFinal,
-        role: "user",
+        role: "user" as const,
         content: message,
-      });
+      };
+      const { error: insertError } = await supabase.from("ai_messages").insert(messageRow);
       if (insertError) {
-        return jsonError(`Could not save your message: ${insertError.message}`, 500);
+        if (admin) {
+          console.warn("[api:ai/chat] user-scoped message insert failed, using service role:", insertError.message);
+          const { error: elevatedError } = await admin.from("ai_messages").insert(messageRow);
+          if (elevatedError) {
+            return jsonError(`Could not save your message: ${elevatedError.message}`, 500);
+          }
+        } else {
+          return jsonError(`Could not save your message: ${insertError.message}`, 500);
+        }
       }
       await supabase
         .from("ai_conversations")

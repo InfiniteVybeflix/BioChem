@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import {
-  BrainCircuit,
   CheckCircle2,
   ChevronRight,
   Loader2,
@@ -12,6 +11,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { NovaMark } from "@/components/ai/nova-mark";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Markdown } from "@/components/markdown/markdown";
@@ -131,7 +131,7 @@ export function PracticeRunner({
       <div className="glass-card mx-auto max-w-xl space-y-5 p-6">
         <div className="text-center">
           <span className="bg-primary/10 text-primary mx-auto flex size-12 items-center justify-center rounded-2xl">
-            <BrainCircuit className="size-6" aria-hidden />
+            <NovaMark className="size-6" />
           </span>
           <h2 className="font-display mt-3 text-lg font-semibold">AI Practice</h2>
           <p className="text-muted-foreground mt-1 text-sm">

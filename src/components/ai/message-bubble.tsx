@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Bot,
   BookOpen,
   Check,
   Copy,
@@ -18,6 +17,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/markdown/markdown";
+import { NovaMark } from "@/components/ai/nova-mark";
 import { cn } from "@/lib/utils";
 import { parseStoredActions, stripStoredActions } from "@/lib/ai/nova/actions";
 import type { NovaAction } from "@/lib/ai/nova/facts";
@@ -273,7 +273,7 @@ export function MessageBubble({
           className="bg-primary/10 text-primary mt-1 flex size-8 shrink-0 items-center justify-center rounded-full"
           aria-hidden
         >
-          <Bot className="size-4" />
+          <NovaMark className="size-4" />
         </span>
       ) : null}
       <div className="flex max-w-[85%] flex-col sm:max-w-[75%]">
@@ -394,7 +394,7 @@ export function StreamingBubble({ text }: { text: string }) {
         className="bg-primary/10 text-primary mt-1 flex size-8 shrink-0 items-center justify-center rounded-full"
         aria-hidden
       >
-        <Bot className="size-4" />
+        <NovaMark className="size-4" />
       </span>
       <div className="glass-card focus-ring max-w-[85%] rounded-2xl rounded-bl-md px-4 py-3 sm:max-w-[75%]">
         <span className="sr-only">Nova is replying…</span>
