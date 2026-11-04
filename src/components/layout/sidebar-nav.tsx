@@ -16,6 +16,7 @@ import {
   LifeBuoy,
   MessageCircle,
   MessagesSquare,
+  Newspaper,
   Settings,
   Sparkles,
   Trophy,
@@ -40,6 +41,7 @@ const SECTIONS: NavSection[] = [
     title: "Study",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Course Units", href: "/units", icon: BookOpen },
       { label: "Exam Zones", href: "/zones", icon: Layers },
       { label: "Outcomes", href: "/outcomes", icon: CalendarCheck },
       { label: "Question Bank", href: "/questions", icon: ClipboardCheck },
@@ -64,6 +66,7 @@ const SECTIONS: NavSection[] = [
   {
     title: "Community",
     items: [
+      { label: "News & updates", href: "/news", icon: Newspaper },
       { label: "Discussions", href: "/community", icon: MessagesSquare },
       { label: "Messages", href: "/messages", icon: MessageCircle },
       { label: "Leaderboard", href: "/leaderboard", icon: Trophy },

@@ -165,11 +165,19 @@ export const pushSubscribeSchema = z.object({
   }),
 });
 
+export const AD_PLACEMENTS = ["jobs", "events", "resources", "sidebar", "banner"] as const;
+
 export const adSchema = z.object({
   title: z.string().min(2).max(120),
   body: z.string().min(2).max(600),
-  placement: z.enum(["jobs", "events", "resources", "sidebar", "banner"]),
-  targetUrl: z.string().url(),
+  /** Every slot this single ad appears in (1–5). */
+  placements: z
+    .array(z.enum(AD_PLACEMENTS))
+    .min(1, "Pick at least one placement")
+    .max(5, "An ad can target at most 5 placements"),
+  /** Rendering size of the ad card inside its slot. */
+  size: z.enum(["compact", "standard", "large"]).default("standard"),
+  targetUrl: z.string().url("Use a full URL, including https://"),
   imageUrl: z.string().url().nullable().optional(),
   ctaLabel: z.string().min(2).max(40).default("Learn more"),
   endsAt: z.string().datetime().nullable().optional(),

@@ -106,7 +106,7 @@ export function FloatingTutor() {
     if (!supabase) return;
     const { data } = await supabase
       .from("ai_conversations")
-      .select("id, title, updated_at")
+      .select("id, title, updated_at, archived")
       .order("updated_at", { ascending: false })
       .limit(50);
     setConversations(data ?? []);
@@ -205,6 +205,27 @@ export function FloatingTutor() {
         ),
       );
       toast.success("Conversation renamed");
+    },
+    [supabase],
+  );
+
+  const archiveConversation = useCallback(
+    async (id: string, archived: boolean) => {
+      if (!supabase) return;
+      const { error } = await supabase
+        .from("ai_conversations")
+        .update({ archived })
+        .eq("id", id);
+      if (error) {
+        toast.error(`Could not ${archived ? "archive" : "restore"} the conversation: ${error.message}`);
+        return;
+      }
+      setConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === id ? { ...conversation, archived } : conversation,
+        ),
+      );
+      toast.success(archived ? "Conversation archived" : "Conversation restored");
     },
     [supabase],
   );
@@ -411,6 +432,7 @@ export function FloatingTutor() {
                 onNew={startNewConversation}
                 onDelete={deleteConversation}
                 onRename={renameConversation}
+                onArchive={archiveConversation}
               />
             </div>
           ) : (
